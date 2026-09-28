@@ -27,7 +27,14 @@ function ScrollToTop() {
 }
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { user } = useStore()
+  const { user, isReady } = useStore()
+  if (!isReady) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center pt-[110px]">
+        <div className="w-8 h-8 rounded-full border-2 border-gold/25 border-t-gold animate-spin" />
+      </div>
+    )
+  }
   if (!user) return <Navigate to="/login" replace />
   return <>{children}</>
 }

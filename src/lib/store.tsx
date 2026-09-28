@@ -7,53 +7,14 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import type { Booking, BookingStatus, StoredUser, ToastItem, User } from './types'
+import type { Booking, BookingStatus, ToastItem, User } from './types'
 import { generateBookingCode } from './utils'
 import { calcPromoDiscount, PROMO_CODES } from './data'
+import { supabase } from './supabase'
 
-const USERS_KEY = 'stikini_users'
-const SESSION_KEY = 'stikini_session'
-const BOOKINGS_KEY = 'stikini_bookings'
-const FAVORITES_KEY = 'stikini_favorites'
-
-function readJSON<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key)
-    if (!raw) return fallback
-    return JSON.parse(raw) as T
-  } catch {
-    return fallback
-  }
-}
-
-function writeJSON(key: string, value: unknown): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value))
-  } catch {
-    /* storage unavailable — ignore */
-  }
-}
-
-const toPublicUser = (u: StoredUser): User => ({
-  id: u.id,
-  name: u.name,
-  email: u.email,
-  phone: u.phone,
-  type: u.type,
-  salonId: u.salonId,
-  createdAt: u.createdAt,
-})
-
-/**
- * هل هذا الحجز يخص هذا المستخدم؟
- * - الحجوزات الجديدة تُربط بمعرّف الحساب (userId).
- * - الحجوزات القديمة/حجوزات الزوار (بدون userId) تُنسب فقط لصاحب نفس البريد الإلكتروني.
- */
 export const ownsBooking = (booking: Booking, user: User | null): boolean => {
   if (!user) return false
-  if (booking.userId) return booking.userId === user.id
-  const bookingEmail = (booking.email || '').trim().toLowerCase()
-  return bookingEmail !== '' && bookingEmail === user.email.trim().toLowerCase()
+  return booking.userId === user.id
 }
 
 export interface NewBookingInput {
@@ -72,11 +33,9 @@ export interface NewBookingInput {
 
 interface StoreValue {
   user: User | null
-  /** حجوزات المستخدم الحالي فقط — لا يرى أي زبون حجوزات غيره */
+  isReady: boolean
   bookings: Booking[]
-  /** جميع حجوزات المنصة — للعرض العام فقط في "نظرة عامة"، بدون أي إجراء (إلغاء/تأكيد) عليها */
   allBookings: Booking[]
-  /** حجوزات الصالون الذي يديره صاحب الحساب (فارغة لغير أصحاب الصالونات) */
   salonBookings: Booking[]
   favorites: string[]
   toasts: ToastItem[]
@@ -86,19 +45,19 @@ interface StoreValue {
     phone: string
     password: string
     type: 'client' | 'owner'
-  }) => { ok: boolean; error?: string }
-  login: (email: string, password: string) => { ok: boolean; error?: string }
-  logout: () => void
+  }) => Promise<{ ok: boolean; error?: string; message?: string }>
+  login: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>
+  logout: () => Promise<void>
   createBooking: (
     input: NewBookingInput,
-  ) => { ok: true; booking: Booking } | { ok: false; error: string }
-  /** إلغاء حجز يخص المستخدم الحالي فقط */
-  cancelBooking: (id: string) => void
-  /** صاحب الصالون: إنهاء (مكتمل) أو إلغاء موعد داخل صالونه فقط */
-  updateSalonBookingStatus: (id: string, status: Exclude<BookingStatus, 'مؤكد'>) => void
-  /** صاحب الصالون: ربط الحساب بصالون */
-  setOwnerSalon: (salonId: string) => void
-  toggleFavorite: (salonId: string) => void
+  ) => Promise<{ ok: true; booking: Booking } | { ok: false; error: string }>
+  cancelBooking: (id: string) => Promise<void>
+  updateSalonBookingStatus: (
+    id: string,
+    status: Exclude<BookingStatus, 'مؤكد'>,
+  ) => Promise<void>
+  setOwnerSalon: (salonId: string) => Promise<void>
+  toggleFavorite: (salonId: string) => Promise<void>
   isFavorite: (salonId: string) => boolean
   showToast: (message: string, type?: ToastItem['type']) => void
   dismissToast: (id: string) => void
@@ -106,59 +65,56 @@ interface StoreValue {
 
 const StoreContext = createContext<StoreValue | null>(null)
 
+function mapProfile(row: Record<string, unknown>): User {
+  return {
+    id: String(row.id),
+    name: String(row.name ?? ''),
+    email: String(row.email ?? ''),
+    phone: String(row.phone ?? ''),
+    type: row.type === 'owner' ? 'owner' : 'client',
+    salonId: row.salon_id ? String(row.salon_id) : undefined,
+    createdAt: String(row.created_at ?? new Date().toISOString()),
+  }
+}
+
+function mapBooking(row: Record<string, any>): Booking {
+  return {
+    id: String(row.id),
+    code: String(row.code),
+    salonId: String(row.salon_id),
+    salonName: String(row.salon_name),
+    services: Array.isArray(row.services) ? row.services : [],
+    barberName: String(row.barber_name),
+    date: String(row.date),
+    time: String(row.time),
+    clientName: String(row.client_name ?? ''),
+    phone: String(row.phone ?? ''),
+    email: String(row.email ?? ''),
+    notes: String(row.notes ?? ''),
+    totalPrice: Number(row.total_price ?? 0),
+    discount: Number(row.discount ?? 0),
+    promoCode: row.promo_code ? String(row.promo_code) : undefined,
+    userId: row.user_id ? String(row.user_id) : undefined,
+    status: row.status as BookingStatus,
+    createdAt: String(row.created_at),
+  }
+}
+
+function authErrorMessage(error: { message?: string; status?: number } | null): string {
+  const message = error?.message?.toLowerCase() ?? ''
+  if (message.includes('invalid login credentials')) return 'البريد الإلكتروني أو كلمة المرور غير صحيحة.'
+  if (message.includes('email not confirmed')) return 'يجب تأكيد بريدك الإلكتروني أولاً ثم تسجيل الدخول.'
+  if (message.includes('user already registered')) return 'هذا البريد الإلكتروني مسجّل مسبقاً. جرّب تسجيل الدخول.'
+  if (message.includes('password')) return 'كلمة المرور يجب أن تكون 8 أحرف على الأقل.'
+  return error?.message || 'حدث خطأ غير متوقع. حاول مرة أخرى.'
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(() => {
-    const session = readJSON<{ userId: string } | null>(SESSION_KEY, null)
-    if (!session) return null
-    const users = readJSON<StoredUser[]>(USERS_KEY, [])
-    const found = users.find((u) => u.id === session.userId)
-    if (!found) return null
-    return toPublicUser(found)
-  })
-
-  const [allBookings, setAllBookings] = useState<Booking[]>(() =>
-    readJSON<Booking[]>(BOOKINGS_KEY, []),
-  )
-  const [favorites, setFavorites] = useState<string[]>(() =>
-    readJSON<string[]>(FAVORITES_KEY, ['prestige-hydra', 'royal-draria']),
-  )
+  const [user, setUser] = useState<User | null>(null)
+  const [isReady, setIsReady] = useState(false)
+  const [allBookings, setAllBookings] = useState<Booking[]>([])
+  const [favorites, setFavorites] = useState<string[]>([])
   const [toasts, setToasts] = useState<ToastItem[]>([])
-
-  useEffect(() => writeJSON(FAVORITES_KEY, favorites), [favorites])
-
-  // مزامنة الحجوزات بين التبويبات (مثلاً: صاحب الصالون يلغي موعداً فيظهر للزبون فوراً)
-  useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === BOOKINGS_KEY) {
-        setAllBookings(readJSON<Booking[]>(BOOKINGS_KEY, []))
-      }
-    }
-    window.addEventListener('storage', onStorage)
-    return () => window.removeEventListener('storage', onStorage)
-  }, [])
-
-  // نقرأ آخر نسخة من التخزين قبل أي تعديل حتى لا نطمس تغييرات تبويب آخر
-  const commitBookings = useCallback((updater: (prev: Booking[]) => Booking[]) => {
-    const latest = readJSON<Booking[]>(BOOKINGS_KEY, [])
-    const next = updater(latest)
-    writeJSON(BOOKINGS_KEY, next)
-    setAllBookings(next)
-  }, [])
-
-  // ما يراه المستخدم: حجوزاته فقط
-  const bookings = useMemo(
-    () => (user ? allBookings.filter((b) => ownsBooking(b, user)) : []),
-    [allBookings, user],
-  )
-
-  // ما يراه صاحب الصالون: حجوزات صالونه فقط
-  const salonBookings = useMemo(
-    () =>
-      user && user.type === 'owner' && user.salonId
-        ? allBookings.filter((b) => b.salonId === user.salonId)
-        : [],
-    [allBookings, user],
-  )
 
   const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id))
@@ -175,173 +131,344 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [],
   )
 
-  const register = useCallback<StoreValue['register']>((input) => {
-    const users = readJSON<StoredUser[]>(USERS_KEY, [])
+  const loadUserData = useCallback(async (authUserId: string) => {
+    const [profileResult, bookingsResult, favoritesResult, publicBookingsResult] = await Promise.all([
+      supabase.from('profiles').select('*').eq('id', authUserId).maybeSingle(),
+      supabase.from('bookings').select('*').eq('user_id', authUserId).order('created_at', { ascending: false }),
+      supabase.from('favorites').select('salon_id').eq('user_id', authUserId),
+      supabase
+        .from('public_upcoming_bookings')
+        .select('*')
+        .order('date', { ascending: true })
+        .order('time', { ascending: true }),
+    ])
+
+    if (profileResult.error) throw profileResult.error
+    if (bookingsResult.error) throw bookingsResult.error
+    if (favoritesResult.error) throw favoritesResult.error
+    if (publicBookingsResult.error) throw publicBookingsResult.error
+
+    setUser(profileResult.data ? mapProfile(profileResult.data) : null)
+    setAllBookings((publicBookingsResult.data ?? []).map(mapBooking))
+    setFavorites((favoritesResult.data ?? []).map((row) => String(row.salon_id)))
+
+    return (bookingsResult.data ?? []).map(mapBooking)
+  }, [])
+
+  const refreshPublicBookings = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('public_upcoming_bookings')
+      .select('*')
+      .order('date', { ascending: true })
+      .order('time', { ascending: true })
+
+    if (!error) setAllBookings((data ?? []).map(mapBooking))
+  }, [])
+
+  useEffect(() => {
+    let mounted = true
+
+    const initialize = async () => {
+      const { data, error } = await supabase.auth.getSession()
+      if (!mounted) return
+
+      if (error || !data.session) {
+        setUser(null)
+        setAllBookings([])
+        setFavorites([])
+        setIsReady(true)
+        return
+      }
+
+      try {
+        await loadUserData(data.session.user.id)
+      } catch (loadError) {
+        console.error('Failed to load Supabase data:', loadError)
+        await supabase.auth.signOut()
+        setUser(null)
+      } finally {
+        if (mounted) setIsReady(true)
+      }
+    }
+
+    void initialize()
+
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!mounted) return
+      if (event === 'SIGNED_OUT' || !session) {
+        setUser(null)
+        setAllBookings([])
+        setFavorites([])
+        setIsReady(true)
+        return
+      }
+
+      window.setTimeout(() => {
+        void loadUserData(session.user.id).catch((error) => {
+          console.error('Failed to refresh Supabase session data:', error)
+        })
+      }, 0)
+    })
+
+    return () => {
+      mounted = false
+      listener.subscription.unsubscribe()
+    }
+  }, [loadUserData])
+
+  const [myBookings, setMyBookings] = useState<Booking[]>([])
+
+  useEffect(() => {
+    if (!user) {
+      setMyBookings([])
+      return
+    }
+
+    const loadMine = async () => {
+      const { data, error } = await supabase
+        .from('bookings')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+      if (!error) setMyBookings((data ?? []).map(mapBooking))
+    }
+
+    void loadMine()
+  }, [user])
+
+  const salonBookings = useMemo(
+    () =>
+      user?.type === 'owner' && user.salonId
+        ? myBookings.filter((b) => b.salonId === user.salonId)
+        : [],
+    [myBookings, user],
+  )
+
+  // Owners must see all bookings belonging to their salon, not just their own bookings.
+  useEffect(() => {
+    if (!user || user.type !== 'owner' || !user.salonId) {
+      return
+    }
+
+    const loadSalonBookings = async () => {
+      const { data, error } = await supabase
+        .from('bookings')
+        .select('*')
+        .eq('salon_id', user.salonId)
+        .order('date', { ascending: true })
+        .order('time', { ascending: true })
+      if (!error) setMyBookings((data ?? []).map(mapBooking))
+    }
+
+    void loadSalonBookings()
+  }, [user])
+
+  const register = useCallback<StoreValue['register']>(async (input) => {
     const email = input.email.trim().toLowerCase()
-    if (users.some((u) => u.email.toLowerCase() === email)) {
-      return { ok: false, error: 'هذا البريد الإلكتروني مسجّل مسبقاً. جرّب تسجيل الدخول.' }
-    }
-    const newUser: StoredUser = {
-      id: `u-${Date.now()}`,
-      name: input.name.trim(),
-      email: input.email.trim(),
-      phone: input.phone.trim(),
+    const { error } = await supabase.auth.signUp({
+      email,
       password: input.password,
-      type: input.type,
-      createdAt: new Date().toISOString(),
+      options: {
+        data: {
+          name: input.name.trim(),
+          phone: input.phone.trim(),
+          type: input.type,
+        },
+      },
+    })
+
+    if (error) return { ok: false, error: authErrorMessage(error) }
+
+    const { data: sessionData } = await supabase.auth.getSession()
+    if (!sessionData.session) {
+      return {
+        ok: true,
+        message: 'تم إنشاء الحساب. تحقق من بريدك الإلكتروني لتفعيل الحساب ثم سجّل الدخول.',
+      }
     }
-    const next = [...users, newUser]
-    writeJSON(USERS_KEY, next)
-    writeJSON(SESSION_KEY, { userId: newUser.id })
-    setUser(toPublicUser(newUser))
+
     return { ok: true }
   }, [])
 
-  const login = useCallback<StoreValue['login']>((email, password) => {
-    const users = readJSON<StoredUser[]>(USERS_KEY, [])
-    const trimmed = email.trim().toLowerCase()
-    const found = users.find((u) => u.email.toLowerCase() === trimmed)
-    if (!found) {
-      return { ok: false, error: 'البريد الإلكتروني غير مسجّل في المنصة.' }
-    }
-    if (found.password !== password) {
-      return { ok: false, error: 'كلمة المرور غير صحيحة. حاول مرة أخرى.' }
-    }
-    writeJSON(SESSION_KEY, { userId: found.id })
-    setUser(toPublicUser(found))
-    return { ok: true }
-  }, [])
+  const login = useCallback<StoreValue['login']>(async (email, password) => {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email.trim().toLowerCase(),
+      password,
+    })
 
-  const logout = useCallback(() => {
+    if (error || !data.user) return { ok: false, error: authErrorMessage(error) }
+
     try {
-      localStorage.removeItem(SESSION_KEY)
-    } catch {
-      /* ignore */
+      await loadUserData(data.user.id)
+    } catch (loadError) {
+      console.error(loadError)
+      return { ok: false, error: 'تم تسجيل الدخول، لكن تعذر تحميل بيانات الحساب. حاول تحديث الصفحة.' }
     }
+
+    return { ok: true }
+  }, [loadUserData])
+
+  const logout = useCallback(async () => {
+    await supabase.auth.signOut()
     setUser(null)
+    setAllBookings([])
+    setMyBookings([])
+    setFavorites([])
     showToast('تم تسجيل الخروج بنجاح. نراك قريباً!', 'info')
   }, [showToast])
 
   const createBooking = useCallback<StoreValue['createBooking']>(
-    (input) => {
-      // نقرأ آخر نسخة من الحجوزات مباشرة من التخزين (وليس من الحالة القديمة في الذاكرة)
-      // حتى نلتقط أي حجز تم في تبويب أو جلسة أخرى في نفس اللحظة
-      const latest = readJSON<Booking[]>(BOOKINGS_KEY, [])
-      const isTaken = latest.some(
-        (b) =>
-          b.salonId === input.salonId &&
-          b.barberName === input.barberName &&
-          b.date === input.date &&
-          b.time === input.time &&
-          b.status === 'مؤكد',
-      )
-      if (isTaken) {
-        return {
-          ok: false,
-          error: 'عذراً، هذا الموعد لم يعد متاحاً — تم حجزه للتو من طرف زبون آخر. يرجى اختيار توقيت مختلف.',
-        }
+    async (input) => {
+      if (!user) {
+        return { ok: false, error: 'يجب تسجيل الدخول قبل تأكيد الحجز حتى يتم حفظه في حسابك.' }
       }
 
       const subtotal = input.services.reduce((sum, s) => sum + s.price, 0)
       const promoCode = input.promoCode?.trim().toUpperCase()
       const validPromo = promoCode && PROMO_CODES[promoCode] ? promoCode : undefined
       const discount = calcPromoDiscount(validPromo, subtotal)
-      const booking: Booking = {
-        id: `b-${Date.now()}`,
-        code: generateBookingCode(),
-        salonId: input.salonId,
-        salonName: input.salonName,
-        services: input.services.map((s) => ({
-          id: s.id,
-          name: s.name,
-          price: s.price,
-          duration: s.duration,
-        })),
-        barberName: input.barberName,
-        date: input.date,
-        time: input.time,
-        clientName: input.clientName,
-        phone: input.phone,
-        email: input.email,
-        notes: input.notes,
-        totalPrice: subtotal - discount,
-        discount,
-        promoCode: validPromo,
-        userId: user?.id,
-        status: 'مؤكد',
-        createdAt: new Date().toISOString(),
+      const bookingId = `b-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+
+      const { data, error } = await supabase
+        .from('bookings')
+        .insert({
+          id: bookingId,
+          code: generateBookingCode(),
+          user_id: user.id,
+          salon_id: input.salonId,
+          salon_name: input.salonName,
+          services: input.services,
+          barber_name: input.barberName,
+          date: input.date,
+          time: input.time,
+          client_name: input.clientName,
+          phone: input.phone,
+          email: input.email,
+          notes: input.notes,
+          total_price: subtotal - discount,
+          discount,
+          promo_code: validPromo ?? null,
+          status: 'مؤكد',
+        })
+        .select('*')
+        .single()
+
+      if (error) {
+        if (error.code === '23505') {
+          return {
+            ok: false,
+            error: 'عذراً، هذا الموعد لم يعد متاحاً — تم حجزه للتو من طرف زبون آخر. يرجى اختيار توقيت مختلف.',
+          }
+        }
+        console.error('Create booking error:', error)
+        return { ok: false, error: 'تعذر حفظ الحجز في قاعدة البيانات. حاول مرة أخرى.' }
       }
-      commitBookings((prev) => [booking, ...prev])
+
+      const booking = mapBooking(data)
+      setMyBookings((prev) => [booking, ...prev])
+      await refreshPublicBookings()
       return { ok: true, booking }
     },
-    [user, commitBookings],
+    [refreshPublicBookings, user],
   )
 
   const cancelBooking = useCallback(
-    (id: string) => {
-      const latest = readJSON<Booking[]>(BOOKINGS_KEY, [])
-      const target = latest.find((b) => b.id === id)
-      if (!target || !ownsBooking(target, user)) {
-        showToast('لا يمكنك إلغاء حجز لا يخصّك.', 'error')
+    async (id: string) => {
+      if (!user) return
+      const { error } = await supabase
+        .from('bookings')
+        .update({ status: 'ملغى' })
+        .eq('id', id)
+        .eq('user_id', user.id)
+
+      if (error) {
+        showToast('تعذر إلغاء الحجز. حاول مرة أخرى.', 'error')
         return
       }
-      if (target.status !== 'مؤكد') return
-      commitBookings((prev) =>
-        prev.map((b) => (b.id === id ? { ...b, status: 'ملغى' as const } : b)),
-      )
+
+      setMyBookings((prev) => prev.map((b) => (b.id === id ? { ...b, status: 'ملغى' } : b)))
+      await refreshPublicBookings()
       showToast('تم إلغاء الحجز بنجاح.', 'info')
     },
-    [user, commitBookings, showToast],
+    [refreshPublicBookings, showToast, user],
   )
 
   const updateSalonBookingStatus = useCallback<StoreValue['updateSalonBookingStatus']>(
-    (id, status) => {
+    async (id, status) => {
       if (!user || user.type !== 'owner' || !user.salonId) {
         showToast('هذه العملية متاحة لصاحب الصالون فقط.', 'error')
         return
       }
-      const latest = readJSON<Booking[]>(BOOKINGS_KEY, [])
-      const target = latest.find((b) => b.id === id)
-      if (!target || target.salonId !== user.salonId) {
-        showToast('لا يمكنك تعديل موعد خارج صالونك.', 'error')
+
+      const { error } = await supabase
+        .from('bookings')
+        .update({ status })
+        .eq('id', id)
+        .eq('salon_id', user.salonId)
+
+      if (error) {
+        showToast('تعذر تحديث حالة الموعد. حاول مرة أخرى.', 'error')
         return
       }
-      if (target.status !== 'مؤكد') return
-      commitBookings((prev) => prev.map((b) => (b.id === id ? { ...b, status } : b)))
-      showToast(
-        status === 'مكتمل' ? 'تم تسجيل الموعد كمكتمل.' : 'تم إلغاء الموعد.',
-        status === 'مكتمل' ? 'success' : 'info',
-      )
+
+      setMyBookings((prev) => prev.map((b) => (b.id === id ? { ...b, status } : b)))
+      await refreshPublicBookings()
+      showToast(status === 'مكتمل' ? 'تم تسجيل الموعد كمكتمل.' : 'تم إلغاء الموعد.', status === 'مكتمل' ? 'success' : 'info')
     },
-    [user, commitBookings, showToast],
+    [refreshPublicBookings, showToast, user],
   )
 
   const setOwnerSalon = useCallback(
-    (salonId: string) => {
+    async (salonId: string) => {
       if (!user || user.type !== 'owner') return
-      const users = readJSON<StoredUser[]>(USERS_KEY, [])
-      const next = users.map((u) => (u.id === user.id ? { ...u, salonId } : u))
-      writeJSON(USERS_KEY, next)
+      const { error } = await supabase.from('profiles').update({ salon_id: salonId }).eq('id', user.id)
+      if (error) {
+        showToast('تعذر حفظ الصالون في الحساب.', 'error')
+        return
+      }
       setUser({ ...user, salonId })
+      showToast('تم حفظ الصالون في حسابك.', 'success')
     },
-    [user],
+    [showToast, user],
   )
 
-  const toggleFavorite = useCallback((salonId: string) => {
-    setFavorites((prev) =>
-      prev.includes(salonId) ? prev.filter((id) => id !== salonId) : [...prev, salonId],
-    )
-  }, [])
+  const toggleFavorite = useCallback(
+    async (salonId: string) => {
+      if (!user) {
+        showToast('سجّل الدخول أولاً لحفظ الصالونات المفضلة.', 'info')
+        return
+      }
 
-  const isFavorite = useCallback(
-    (salonId: string) => favorites.includes(salonId),
-    [favorites],
+      if (favorites.includes(salonId)) {
+        const { error } = await supabase
+          .from('favorites')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('salon_id', salonId)
+        if (error) {
+          showToast('تعذر إزالة الصالون من المفضلة.', 'error')
+          return
+        }
+        setFavorites((prev) => prev.filter((id) => id !== salonId))
+      } else {
+        const { error } = await supabase.from('favorites').insert({ user_id: user.id, salon_id: salonId })
+        if (error && error.code !== '23505') {
+          showToast('تعذر حفظ الصالون في المفضلة.', 'error')
+          return
+        }
+        setFavorites((prev) => [...prev, salonId])
+      }
+    },
+    [favorites, showToast, user],
   )
+
+  const isFavorite = useCallback((salonId: string) => favorites.includes(salonId), [favorites])
 
   const value = useMemo<StoreValue>(
     () => ({
       user,
-      bookings,
+      isReady,
+      bookings: myBookings,
       allBookings,
       salonBookings,
       favorites,
@@ -360,7 +487,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }),
     [
       user,
-      bookings,
+      isReady,
+      myBookings,
       allBookings,
       salonBookings,
       favorites,

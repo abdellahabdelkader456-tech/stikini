@@ -40,7 +40,7 @@ export default function RegisterPage() {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     const newErrors: Record<string, string> = {}
 
@@ -56,23 +56,25 @@ export default function RegisterPage() {
     if (Object.keys(newErrors).length > 0) return
 
     setLoading(true)
-    window.setTimeout(() => {
-      const result = register({
-        name: name.trim(),
-        email: email.trim(),
-        phone: phone.trim(),
-        password,
-        type: accountType,
-      })
-      setLoading(false)
+    const result = await register({
+      name: name.trim(),
+      email: email.trim(),
+      phone: phone.trim(),
+      password,
+      type: accountType,
+    })
+    setLoading(false)
 
-      if (result.ok) {
-        showToast('تم إنشاء حسابك بنجاح! مرحباً بك في stikini.', 'success')
-        navigate(redirectTo || (accountType === 'owner' ? '/dashboard' : '/salons'))
+    if (result.ok) {
+      showToast(result.message ?? 'تم إنشاء حسابك بنجاح! مرحباً بك في stikini.', 'success')
+      if (result.message?.includes('تحقق من بريدك')) {
+        navigate('/login')
       } else {
-        setErrors({ general: result.error ?? 'حدث خطأ غير متوقع.' })
+        navigate(redirectTo || (accountType === 'owner' ? '/dashboard' : '/salons'))
       }
-    }, 850)
+    } else {
+      setErrors({ general: result.error ?? 'حدث خطأ غير متوقع.' })
+    }
   }
 
   return (

@@ -168,50 +168,48 @@ export default function BookingPage() {
     else navigate(`/salon/${salon.slug}`)
   }
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!validateStep(2)) {
       setStep(2)
       return
     }
 
     setSubmitting(true)
-    window.setTimeout(() => {
-      const result = createBooking({
-        salonId: salon.id,
-        salonName: salon.name,
-        services: chosenServices.map((s) => ({
-          id: s.id,
-          name: s.name,
-          price: s.price,
-          duration: s.duration,
-        })),
-        barberName: selectedBarber,
-        date,
-        time,
-        clientName: name.trim(),
-        phone: phone.trim(),
-        email: email.trim(),
-        notes: notes.trim(),
-        promoCode: appliedPromo || undefined,
-      })
 
-      setSubmitting(false)
+    const result = await createBooking({
+      salonId: salon.id,
+      salonName: salon.name,
+      services: chosenServices.map((s) => ({
+        id: s.id,
+        name: s.name,
+        price: s.price,
+        duration: s.duration,
+      })),
+      barberName: selectedBarber,
+      date,
+      time,
+      clientName: name.trim(),
+      phone: phone.trim(),
+      email: email.trim(),
+      notes: notes.trim(),
+      promoCode: appliedPromo || undefined,
+    })
 
-      if (!result.ok) {
-        // الموعد لم يعد متاحاً — نعيد الزبون لخطوة اختيار التوقيت ونوضح السبب
-        setTime('')
-        setErrors((e) => ({ ...e, time: result.error }))
-        setStep(1)
-        showToast(result.error, 'error')
-        window.scrollTo({ top: 0, behavior: 'smooth' })
-        return
-      }
+    setSubmitting(false)
 
-      setConfirmedBooking(result.booking)
-      setStep(3)
-      showToast('تم تأكيد حجزك بنجاح!', 'success')
+    if (!result.ok) {
+      setTime('')
+      setErrors((e) => ({ ...e, time: result.error }))
+      setStep(1)
+      showToast(result.error, 'error')
       window.scrollTo({ top: 0, behavior: 'smooth' })
-    }, 900)
+      return
+    }
+
+    setConfirmedBooking(result.booking)
+    setStep(3)
+    showToast('تم تأكيد حجزك بنجاح!', 'success')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   /* ---------- CONFIRMATION SCREEN ---------- */

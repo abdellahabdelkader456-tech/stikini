@@ -28,11 +28,12 @@ import { formatDateAr, formatPrice, cn } from '../lib/utils'
 import { EmptyState, Stars } from '../components/SalonCard'
 
 export default function DashboardPage() {
-  const { user, bookings, favorites, cancelBooking, showToast } = useStore()
+  const { user, bookings, allBookings, favorites, cancelBooking, showToast } = useStore()
   const isOwner = user?.type === 'owner'
   const [activeTab, setActiveTab] = useState<
     'overview' | 'bookings' | 'favorites' | 'settings'
   >(isOwner ? 'settings' : 'overview')
+  const [showAllUpcoming, setShowAllUpcoming] = useState(false)
 
   const activeBookings = bookings.filter((b) => b.status === 'مؤكد')
   const completedBookings = bookings.filter((b) => b.status === 'مكتمل')
@@ -190,19 +191,17 @@ export default function DashboardPage() {
               {/* Upcoming bookings */}
               <div className="lg:col-span-2">
                 <div className="flex items-center justify-between gap-4 mb-6">
-                  <h2 className="text-[21px] font-black text-cream">الحجوزات القادمة</h2>
-                  <button
-                    onClick={() => setActiveTab('bookings')}
-                    className="flex items-center gap-1.5 text-gold/82 text-[12px] font-bold hover:text-gold transition-colors"
-                  >
-                    عرض الكل
-                    <ArrowLeft className="w-3.5 h-3.5" />
-                  </button>
+                  <div>
+                    <h2 className="text-[21px] font-black text-cream">الحجوزات القادمة</h2>
+                    <p className="mt-1.5 text-cream/35 text-[10.5px]">
+                      أحدث حجوزات المنصة المؤكدة — بدون بيانات الاتصال الخاصة بالزبائن الآخرين.
+                    </p>
+                  </div>
                 </div>
 
-                {activeBookings.length > 0 ? (
+                {(showAllUpcoming ? allBookings.length > 0 : activeBookings.length > 0) ? (
                   <div className="space-y-4">
-                    {activeBookings.slice(0, 3).map((booking, i) => (
+                    {(showAllUpcoming ? allBookings : activeBookings.slice(0, 3)).map((booking, i) => (
                       <motion.div
                         key={booking.id}
                         initial={{ opacity: 0, y: 18 }}
@@ -263,6 +262,19 @@ export default function DashboardPage() {
                         </div>
                       </motion.div>
                     ))}
+
+                  {allBookings.length > 3 && (
+                    <div className="mt-5 flex justify-center">
+                      <button
+                        type="button"
+                        onClick={() => setShowAllUpcoming((value) => !value)}
+                        className="inline-flex items-center gap-2.5 px-7 py-3.5 rounded-2xl border border-gold/28 bg-gold/7 text-gold text-[12px] font-bold hover:bg-gold/12 hover:border-gold/42 transition-all"
+                      >
+                        {showAllUpcoming ? 'إظهار آخر 3 حجوزات' : 'عرض كل الحجوزات القادمة'}
+                        <ArrowLeft className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
                   </div>
                 ) : (
                   <EmptyState

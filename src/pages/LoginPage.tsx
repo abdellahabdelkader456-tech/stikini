@@ -29,7 +29,7 @@ export default function LoginPage() {
   const [errors, setErrors] = useState<{ email?: string; password?: string; general?: string }>({})
   const [loading, setLoading] = useState(false)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     const newErrors: typeof errors = {}
 
@@ -40,17 +40,15 @@ export default function LoginPage() {
     if (Object.keys(newErrors).length > 0) return
 
     setLoading(true)
-    window.setTimeout(() => {
-      const result = login(email, password)
-      setLoading(false)
+    const result = await login(email, password)
+    setLoading(false)
 
-      if (result.ok) {
-        showToast('مرحباً بعودتك! تم تسجيل الدخول بنجاح.', 'success')
-        navigate('/dashboard')
-      } else {
-        setErrors({ general: result.error ?? 'حدث خطأ غير متوقع.' })
-      }
-    }, 750)
+    if (result.ok) {
+      showToast('مرحباً بعودتك! تم تسجيل الدخول بنجاح.', 'success')
+      navigate('/dashboard')
+    } else {
+      setErrors({ general: result.error ?? 'حدث خطأ غير متوقع.' })
+    }
   }
 
   return (

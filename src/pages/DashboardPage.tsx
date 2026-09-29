@@ -199,9 +199,9 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                {(showAllUpcoming ? allBookings.length > 0 : activeBookings.length > 0) ? (
+                 {allBookings.length > 0 ? (
                   <div className="space-y-4">
-                    {(showAllUpcoming ? allBookings : activeBookings.slice(0, 3)).map((booking, i) => (
+                   {(showAllUpcoming ? allBookings : allBookings.slice(0, 3)).map((booking, i) => (
                       <motion.div
                         key={booking.id}
                         initial={{ opacity: 0, y: 18 }}
@@ -263,7 +263,7 @@ export default function DashboardPage() {
                       </motion.div>
                     ))}
 
-                  {allBookings.length > 3 && (
+                  {allBookings.length > 0 && (
                     <div className="mt-5 flex justify-center">
                       <button
                         type="button"

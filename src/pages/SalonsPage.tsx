@@ -324,7 +324,7 @@ export default function SalonsPage() {
                 </div>
                 <div className="flex flex-wrap gap-3.5 shrink-0">
                   <Link
-                    to="/register"
+                    to="/register-salon"
                     className="btn-gold inline-flex items-center gap-2.5 px-7 py-4 rounded-2xl whitespace-nowrap"
                   >
                     سجّل صالونك مجاناً

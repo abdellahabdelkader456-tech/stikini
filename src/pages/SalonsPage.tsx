@@ -4,7 +4,7 @@ import { motion } from 'framer-motion'
 import { Search, SlidersHorizontal, MapPin, Store, X, ArrowLeft } from 'lucide-react'
 import { SalonCard, EmptyState } from '../components/SalonCard'
 import { InteractiveMap } from '../components/InteractiveMap'
-import { SALONS, NEIGHBORHOODS } from '../lib/data'
+import { NEIGHBORHOODS } from '../lib/data'
 import { cn } from '../lib/utils'
 import { useStore } from '../lib/store'
 
@@ -18,7 +18,7 @@ const SORTS = [
 ] as const
 
 export default function SalonsPage() {
-  const { user } = useStore()
+ const { user, salons } = useStore()
   const [query, setQuery] = useState('')
   const [type, setType] = useState<(typeof TYPES)[number]>('الكل')
   const [neighborhood, setNeighborhood] = useState('كل الأحياء')
@@ -26,7 +26,7 @@ export default function SalonsPage() {
   const [showFilters, setShowFilters] = useState(false)
 
   const filtered = useMemo(() => {
-    let list = [...SALONS]
+    let list = [...salons]
 
     if (query.trim()) {
       const q = query.trim().toLowerCase()
@@ -74,7 +74,7 @@ export default function SalonsPage() {
     }
 
     return list
-  }, [query, type, neighborhood, sort])
+  }, [salons, query, type, neighborhood, sort])
 
   const hasActiveFilters =
     query.trim() !== '' || type !== 'الكل' || neighborhood !== 'كل الأحياء' || sort !== 'featured'
@@ -113,7 +113,7 @@ export default function SalonsPage() {
           <div className="max-w-3xl">
             <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gold/10 border border-gold/20 text-gold text-[12px] font-bold">
               <Store className="w-3.5 h-3.5" />
-              {SALONS.length} صالون موثّق في الجزائر العاصمة
+              {salons.length} صالون موثّق في الجزائر العاصمة
             </span>
 
             <h1 className="mt-6 text-[clamp(2.35rem,5.6vw,3.85rem)] font-black text-cream leading-[1.24]">
@@ -252,7 +252,7 @@ export default function SalonsPage() {
         <div className="max-w-7xl mx-auto px-5 sm:px-6">
           {/* Interactive map */}
           <div className="mb-14">
-            <InteractiveMap salons={SALONS} />
+            <InteractiveMap salons={salons} />
           </div>
 
           {/* Results bar */}

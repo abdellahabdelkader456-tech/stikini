@@ -19,7 +19,7 @@ import {
   CalendarCheck,
   Tag,
 } from 'lucide-react'
-import { SALONS, SITE, PROMO_CODES, calcPromoDiscount } from '../lib/data'
+import { SITE, PROMO_CODES, calcPromoDiscount } from '../lib/data'
 import { useStore } from '../lib/store'
 import {
   cn,
@@ -43,10 +43,19 @@ const STEPS = [
 ]
 
 export default function BookingPage() {
-  const { slug } = useParams()
-  const navigate = useNavigate()
-  const salon = SALONS.find((s) => s.slug === slug)
-  const { createBooking, user, showToast, allBookings } = useStore()
+ const { slug } = useParams()
+const navigate = useNavigate()
+
+const {
+  salons,
+  createBooking,
+  user,
+  showToast,
+  allBookings,
+} = useStore()
+
+const salon = salons.find((s) => s.slug === slug)
+
 
   const [step, setStep] = useState(0)
   const [selectedServices, setSelectedServices] = useState<string[]>([])

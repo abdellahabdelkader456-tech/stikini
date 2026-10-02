@@ -17,15 +17,23 @@ import {
   ArrowRight,
   MessageCircle,
 } from 'lucide-react'
-import { SALONS, SITE } from '../lib/data'
+import { SITE } from '../lib/data'
 import { useStore } from '../lib/store'
 import { cn, formatPrice, formatDateAr } from '../lib/utils'
 import { Stars, PriceLevel, EmptyState } from '../components/SalonCard'
 
 export default function SalonDetailPage() {
-  const { slug } = useParams()
-  const salon = SALONS.find((s) => s.slug === slug)
-  const { isFavorite, toggleFavorite, showToast, user } = useStore()
+const { slug } = useParams()
+
+const {
+  salons,
+  isFavorite,
+  toggleFavorite,
+  showToast,
+  user,
+} = useStore()
+
+const salon = salons.find((s) => s.slug === slug)
   const [activeTab, setActiveTab] = useState<'services' | 'team' | 'reviews' | 'gallery'>(
     'services',
   )

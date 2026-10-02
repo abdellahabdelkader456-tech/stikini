@@ -1,9 +1,18 @@
 import { useState, type FormEvent } from 'react'
+import { supabase } from '../lib/supabase'
 
 type Service = {
   name: string
   price: string
   duration: string
+}
+
+type Barber = {
+  name: string
+  experience: string
+  specialties: string[]
+  languages: string
+  photo: File | null
 }
 
 type OpeningHours = {
@@ -16,6 +25,25 @@ type OpeningHours = {
   friday: string
 }
 
+const specialtyOptions = [
+  'قص الشعر',
+  'التدريج (Fade)',
+  'حلاقة اللحية',
+  'الحلاقة الكلاسيكية',
+  'قص الأطفال',
+  'صبغ الشعر',
+  'تسريحات الشعر',
+  'العناية بالشعر',
+]
+
+const createEmptyBarber = (): Barber => ({
+  name: '',
+  experience: '',
+  specialties: [],
+  languages: 'العربية',
+  photo: null,
+})
+
 export default function RegisterSalonPage() {
   const [step, setStep] = useState(1)
 
@@ -24,6 +52,7 @@ export default function RegisterSalonPage() {
     name: '',
     category: '',
     phone: '',
+    chairs: '1',
     wilaya: '',
     commune: '',
     address: '',
@@ -32,15 +61,16 @@ export default function RegisterSalonPage() {
 
   // STEP 2
   const [services, setServices] = useState<Service[]>([
-    {
-      name: '',
-      price: '',
-      duration: '30',
-    },
+    { name: '', price: '', duration: '15' },
   ])
 
-  // STEP 3
-  const [step3, setStep3] = useState({
+  // STEP 3 — BARBERS
+  const [barbers, setBarbers] = useState<Barber[]>([
+    createEmptyBarber(),
+  ])
+
+  // STEP 4
+  const [step4, setStep4] = useState({
     instagram: '',
     facebook: '',
     whatsapp: '',
@@ -59,84 +89,383 @@ export default function RegisterSalonPage() {
   const [coverFile, setCoverFile] = useState<File | null>(null)
   const [galleryFiles, setGalleryFiles] = useState<File[]>([])
 
-  // STEP 1 field update
-  const updateField = (
-    field: keyof typeof form,
-    value: string
-  ) => {
-    setForm((prev) => ({
-      ...prev,
-      [field]: value,
-    }))
+  const updateField = (field: keyof typeof form, value: string) => {
+    setForm((prev) => ({ ...prev, [field]: value }))
   }
 
-  // STEP 2 service update
   const updateService = (
     index: number,
     field: keyof Service,
-    value: string
+    value: string,
   ) => {
     setServices((prev) =>
       prev.map((service, i) =>
-        i === index
-          ? {
-              ...service,
-              [field]: value,
-            }
-          : service
-      )
+        i === index ? { ...service, [field]: value } : service,
+      ),
     )
   }
 
-  // Add service
   const addService = () => {
     setServices((prev) => [
       ...prev,
-      {
-        name: '',
-        price: '',
-        duration: '30',
-      },
+      { name: '', price: '', duration: '15' },
     ])
   }
 
-  // Remove service
   const removeService = (index: number) => {
-    setServices((prev) =>
-      prev.filter((_, i) => i !== index)
+    setServices((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const updateBarber = (
+    index: number,
+    field: keyof Omit<Barber, 'specialties' | 'photo'>,
+    value: string,
+  ) => {
+    setBarbers((prev) =>
+      prev.map((barber, i) =>
+        i === index ? { ...barber, [field]: value } : barber,
+      ),
     )
   }
 
-  // STEP 1 → STEP 2
+  const toggleBarberSpecialty = (index: number, specialty: string) => {
+    setBarbers((prev) =>
+      prev.map((barber, i) => {
+        if (i !== index) return barber
+
+        const exists = barber.specialties.includes(specialty)
+
+        return {
+          ...barber,
+          specialties: exists
+            ? barber.specialties.filter((item) => item !== specialty)
+            : [...barber.specialties, specialty],
+        }
+      }),
+    )
+  }
+
+  const addBarber = () => {
+    setBarbers((prev) => [...prev, createEmptyBarber()])
+  }
+
+  const removeBarber = (index: number) => {
+    setBarbers((prev) => prev.filter((_, i) => i !== index))
+  }
+
   const handleStep1 = (e: FormEvent) => {
     e.preventDefault()
     setStep(2)
   }
 
-  // Final submit for now
-  const handleSubmit = (e: FormEvent) => {
+  const handleStep2 = () => {
+    const hasIncompleteService = services.some(
+      (service) => !service.name.trim() || !service.price.trim(),
+    )
+
+    if (hasIncompleteService) {
+      alert('يرجى إكمال اسم وسعر كل خدمة قبل المتابعة.')
+      return
+    }
+
+    setStep(3)
+  }
+
+  const handleStep3 = () => {
+    const hasIncompleteBarber = barbers.some(
+      (barber) =>
+        !barber.name.trim() ||
+        !barber.experience.trim() ||
+        barber.specialties.length === 0,
+    )
+
+    if (hasIncompleteBarber) {
+      alert(
+        'يرجى إكمال اسم الحلاق، سنوات الخبرة وتخصص واحد على الأقل لكل حلاق.',
+      )
+      return
+    }
+
+    setStep(4)
+  }
+
+  // Upload image to Supabase Storage and return public URL
+  const uploadImage = async (file: File, path: string) => {
+    const { error } = await supabase.storage
+      .from('salon-images')
+      .upload(path, file, {
+        upsert: false,
+        contentType: file.type || 'image/*',
+      })
+
+    if (error) {
+      throw error
+    }
+
+    const { data } = supabase.storage
+      .from('salon-images')
+      .getPublicUrl(path)
+
+    return data.publicUrl
+  }
+
+  const getSafeFileName = (fileName: string) => {
+    return fileName.replace(/[^\w.\-]+/g, '-')
+  }
+
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
 
-    console.log('Salon information:', form)
-    console.log('Services:', services)
-    console.log('Social media:', step3)
-    console.log('Logo:', logoFile)
-    console.log('Cover:', coverFile)
-    console.log('Gallery:', galleryFiles)
+    try {
+      // 1. Get logged-in user
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser()
 
-    alert('تم تجهيز بيانات الصالون بنجاح')
+      if (userError) {
+        throw userError
+      }
+
+      if (!user) {
+        alert('يجب تسجيل الدخول أولاً قبل إنشاء الصالون.')
+        return
+      }
+
+      // 2. Generate salon ID
+      const salonId = crypto.randomUUID()
+
+      // 3. Create salon
+      const { error: salonError } = await supabase.from('salons').insert({
+        id: salonId,
+        name: form.name.trim(),
+        owner_id: user.id,
+        phone: form.phone.trim(),
+        address: form.address.trim(),
+        description: form.description.trim() || null,
+        wilaya: form.wilaya.trim(),
+        commune: form.commune.trim(),
+        category: form.category,
+        instagram: step4.instagram.trim() || null,
+        facebook: step4.facebook.trim() || null,
+        whatsapp: step4.whatsapp.trim() || null,
+        opening_hours: step4.openingHours,
+        status: 'pending',
+      })
+
+      if (salonError) {
+        throw salonError
+      }
+
+      // 4. Upload logo
+      let logoUrl: string | null = null
+
+      if (logoFile) {
+        const safeName = getSafeFileName(logoFile.name)
+
+        const logoPath = `${user.id}/${salonId}/logo-${crypto.randomUUID()}-${safeName}`
+
+        logoUrl = await uploadImage(logoFile, logoPath)
+      }
+
+      // 5. Upload cover
+      let coverUrl: string | null = null
+
+      if (coverFile) {
+        const safeName = getSafeFileName(coverFile.name)
+
+        const coverPath = `${user.id}/${salonId}/cover-${crypto.randomUUID()}-${safeName}`
+
+        coverUrl = await uploadImage(coverFile, coverPath)
+      }
+
+      // 6. Update salon with logo and cover URLs
+      if (logoUrl || coverUrl) {
+        const salonUpdate: {
+          logo_url?: string
+          cover_url?: string
+        } = {}
+
+        if (logoUrl) {
+          salonUpdate.logo_url = logoUrl
+        }
+
+        if (coverUrl) {
+          salonUpdate.cover_url = coverUrl
+        }
+
+        const { error: updateSalonError } = await supabase
+          .from('salons')
+          .update(salonUpdate)
+          .eq('id', salonId)
+          .eq('owner_id', user.id)
+
+        if (updateSalonError) {
+          throw updateSalonError
+        }
+      }
+
+      // 7. Save cover in salon_images
+      if (coverUrl) {
+        const { error: coverImageError } = await supabase
+          .from('salon_images')
+          .insert({
+            salon_id: salonId,
+            image_url: coverUrl,
+            is_cover: true,
+          })
+
+        if (coverImageError) {
+          throw coverImageError
+        }
+      }
+
+      // 8. Upload gallery images
+      if (galleryFiles.length > 0) {
+        for (let index = 0; index < galleryFiles.length; index++) {
+          const file = galleryFiles[index]
+          const safeName = getSafeFileName(file.name)
+
+          const galleryPath = `${user.id}/${salonId}/gallery-${index}-${crypto.randomUUID()}-${safeName}`
+
+          const imageUrl = await uploadImage(file, galleryPath)
+
+          const { error: galleryError } = await supabase
+            .from('salon_images')
+            .insert({
+              salon_id: salonId,
+              image_url: imageUrl,
+              is_cover: false,
+            })
+
+          if (galleryError) {
+            throw galleryError
+          }
+        }
+      }
+
+      // 9. Save services
+      const servicesToInsert = services.map((service) => ({
+        salon_id: salonId,
+        name: service.name.trim(),
+        description: null,
+        category: form.category || null,
+        price: Number(service.price),
+        duration: Number(service.duration),
+      }))
+
+      const { error: servicesError } = await supabase
+        .from('salon_services')
+        .insert(servicesToInsert)
+
+      if (servicesError) {
+        throw servicesError
+      }
+
+      // 10. Upload barber photos and save barbers
+      for (let index = 0; index < barbers.length; index++) {
+        const barber = barbers[index]
+
+        let photoUrl: string | null = null
+
+        if (barber.photo) {
+          const safeName = getSafeFileName(barber.photo.name)
+
+          const barberPhotoPath = `${user.id}/${salonId}/barber-${index}-${crypto.randomUUID()}-${safeName}`
+
+          photoUrl = await uploadImage(barber.photo, barberPhotoPath)
+        }
+
+        const { error: barberError } = await supabase
+          .from('salon_barbers')
+          .insert({
+            salon_id: salonId,
+            name: barber.name.trim(),
+            experience: Number(barber.experience),
+            specialties: barber.specialties,
+            languages: barber.languages.trim() || null,
+            photo_url: photoUrl,
+          })
+
+        if (barberError) {
+          throw barberError
+        }
+      }
+
+      // 11. Success
+      console.log('Salon created:', salonId)
+
+      alert(
+        'تم إنشاء الصالون بنجاح، وسيتم مراجعته قبل نشره.',
+      )
+
+      // Reset form after successful submission
+      setStep(1)
+
+      setForm({
+        name: '',
+        category: '',
+        phone: '',
+        chairs: '1',
+        wilaya: '',
+        commune: '',
+        address: '',
+        description: '',
+      })
+
+      setServices([
+        {
+          name: '',
+          price: '',
+          duration: '15',
+        },
+      ])
+
+      setBarbers([
+        createEmptyBarber(),
+      ])
+
+      setStep4({
+        instagram: '',
+        facebook: '',
+        whatsapp: '',
+        openingHours: {
+          saturday: '',
+          sunday: '',
+          monday: '',
+          tuesday: '',
+          wednesday: '',
+          thursday: '',
+          friday: '',
+        },
+      })
+
+      setLogoFile(null)
+      setCoverFile(null)
+      setGalleryFiles([])
+    } catch (error) {
+      console.error('Error creating salon:', error)
+
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'حدث خطأ غير معروف أثناء إنشاء الصالون.'
+
+      alert(`حدث خطأ أثناء إنشاء الصالون:\n${message}`)
+    }
   }
+
+  const stepLabels = [
+    'المعلومات',
+    'الخدمات',
+    'الحلاقين',
+    'الصور والتواصل',
+  ]
 
   return (
     <div className="min-h-screen bg-forest text-cream pt-28 pb-16 px-4">
-      <div className="max-w-3xl mx-auto">
-
-        {/* ========================= */}
-        {/* HEADER */}
-        {/* ========================= */}
-
+      <div className="max-w-4xl mx-auto">
         <div className="text-center mb-10">
-
           <p className="text-gold text-sm uppercase tracking-[0.2em] mb-3">
             سجّل صالونك
           </p>
@@ -146,122 +475,51 @@ export default function RegisterSalonPage() {
           </h1>
 
           <p className="text-cream/60">
-            أكمل المعلومات المطلوبة لإضافة صالونك
+            أكمل المعلومات المطلوبة لإضافة الصالون وفريق الحلاقين
           </p>
-
         </div>
 
-        {/* ========================= */}
         {/* STEP INDICATOR */}
-        {/* ========================= */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-10">
+          {stepLabels.map((label, index) => {
+            const number = index + 1
 
-        <div className="flex items-center justify-center mb-10">
+            return (
+              <div key={label} className="flex items-center gap-2">
+                <div
+                  className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center font-bold ${
+                    step >= number
+                      ? 'bg-gold text-forest'
+                      : 'border border-cream/20 text-cream/40'
+                  }`}
+                >
+                  {number}
+                </div>
 
-          {/* STEP 1 */}
-
-          <div className="flex items-center">
-
-            <div
-              className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${
-                step >= 1
-                  ? 'bg-gold text-forest'
-                  : 'border border-cream/20 text-cream/40'
-              }`}
-            >
-              1
-            </div>
-
-            <span
-              className={`mx-3 text-sm ${
-                step >= 1
-                  ? 'text-gold'
-                  : 'text-cream/40'
-              }`}
-            >
-              المعلومات
-            </span>
-
-          </div>
-
-          <div className="w-16 h-px bg-cream/20 mx-2" />
-
-          {/* STEP 2 */}
-
-          <div className="flex items-center">
-
-            <div
-              className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${
-                step >= 2
-                  ? 'bg-gold text-forest'
-                  : 'border border-cream/20 text-cream/40'
-              }`}
-            >
-              2
-            </div>
-
-            <span
-              className={`mx-3 text-sm ${
-                step >= 2
-                  ? 'text-gold'
-                  : 'text-cream/40'
-              }`}
-            >
-              الخدمات
-            </span>
-
-          </div>
-
-          <div className="w-16 h-px bg-cream/20 mx-2" />
-
-          {/* STEP 3 */}
-
-          <div className="flex items-center">
-
-            <div
-              className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${
-                step >= 3
-                  ? 'bg-gold text-forest'
-                  : 'border border-cream/20 text-cream/40'
-              }`}
-            >
-              3
-            </div>
-
-            <span
-              className={`ml-3 text-sm ${
-                step >= 3
-                  ? 'text-gold'
-                  : 'text-cream/40'
-              }`}
-            >
-              الصور
-            </span>
-
-          </div>
-
+                <span
+                  className={`text-sm ${
+                    step >= number ? 'text-gold' : 'text-cream/40'
+                  }`}
+                >
+                  {label}
+                </span>
+              </div>
+            )
+          })}
         </div>
 
-        {/* ================================================== */}
         {/* STEP 1 */}
-        {/* ================================================== */}
-
         {step === 1 && (
-
           <form
             onSubmit={handleStep1}
             className="bg-white/5 border border-white/10 rounded-2xl p-6 md:p-8"
           >
-
             <h2 className="text-xl font-semibold mb-6">
               معلومات الصالون
             </h2>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-
-              {/* Salon name */}
-
               <div className="md:col-span-2">
-
                 <label className="block text-sm mb-2">
                   اسم الصالون *
                 </label>
@@ -276,13 +534,9 @@ export default function RegisterSalonPage() {
                   placeholder="مثال: Barber House"
                   className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold"
                 />
-
               </div>
 
-              {/* Category */}
-
               <div>
-
                 <label className="block text-sm mb-2">
                   نوع الصالون *
                 </label>
@@ -295,35 +549,15 @@ export default function RegisterSalonPage() {
                   }
                   className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold"
                 >
-
-                  <option value="">
-                    اختر النوع
-                  </option>
-
-                  <option value="barber">
-                    حلاق رجالي
-                  </option>
-
-                  <option value="salon">
-                    صالون حلاقة
-                  </option>
-
-                  <option value="beauty">
-                    صالون تجميل
-                  </option>
-
-                  <option value="unisex">
-                    صالون للجنسين
-                  </option>
-
+                  <option value="">اختر النوع</option>
+                  <option value="barber">حلاق رجالي</option>
+                  <option value="salon">صالون حلاقة</option>
+                  <option value="beauty">صالون تجميل</option>
+                  <option value="unisex">صالون للجنسين</option>
                 </select>
-
               </div>
 
-              {/* Phone */}
-
               <div>
-
                 <label className="block text-sm mb-2">
                   رقم الهاتف *
                 </label>
@@ -338,13 +572,32 @@ export default function RegisterSalonPage() {
                   placeholder="05 XX XX XX XX"
                   className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold"
                 />
-
               </div>
 
-              {/* Wilaya */}
+              <div>
+                <label className="block text-sm mb-2">
+                  عدد الكراسي *
+                </label>
+
+                <input
+                  type="number"
+                  required
+                  min="1"
+                  step="1"
+                  value={form.chairs}
+                  onChange={(e) =>
+                    updateField('chairs', e.target.value)
+                  }
+                  placeholder="مثال: 4"
+                  className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold"
+                />
+
+                <p className="text-xs text-cream/50 mt-2">
+                  عدد الزبائن الذين يمكن استقبالهم في نفس الوقت عبر كراسي الحلاقة.
+                </p>
+              </div>
 
               <div>
-
                 <label className="block text-sm mb-2">
                   الولاية *
                 </label>
@@ -359,13 +612,9 @@ export default function RegisterSalonPage() {
                   placeholder="مثال: الجزائر"
                   className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold"
                 />
-
               </div>
 
-              {/* Commune */}
-
               <div>
-
                 <label className="block text-sm mb-2">
                   البلدية *
                 </label>
@@ -380,13 +629,9 @@ export default function RegisterSalonPage() {
                   placeholder="مثال: زرالدة"
                   className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold"
                 />
-
               </div>
 
-              {/* Address */}
-
               <div className="md:col-span-2">
-
                 <label className="block text-sm mb-2">
                   العنوان *
                 </label>
@@ -401,13 +646,9 @@ export default function RegisterSalonPage() {
                   placeholder="العنوان الكامل للصالون"
                   className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold"
                 />
-
               </div>
 
-              {/* Description */}
-
               <div className="md:col-span-2">
-
                 <label className="block text-sm mb-2">
                   وصف الصالون
                 </label>
@@ -416,46 +657,28 @@ export default function RegisterSalonPage() {
                   rows={4}
                   value={form.description}
                   onChange={(e) =>
-                    updateField(
-                      'description',
-                      e.target.value
-                    )
+                    updateField('description', e.target.value)
                   }
                   placeholder="اكتب وصفاً قصيراً عن الصالون والخدمات التي يقدمها..."
                   className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold resize-none"
                 />
-
               </div>
-
             </div>
 
-            {/* Next */}
-
             <div className="flex justify-end mt-8">
-
               <button
                 type="submit"
                 className="bg-gold text-forest font-semibold px-7 py-3 rounded-xl hover:opacity-90 transition"
               >
                 التالي →
               </button>
-
             </div>
-
           </form>
-
         )}
 
-        {/* ================================================== */}
         {/* STEP 2 */}
-        {/* ================================================== */}
-
         {step === 2 && (
-
-          <div
-            className="bg-white/5 border border-white/10 rounded-2xl p-6 md:p-8"
-          >
-
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-6 md:p-8">
             <h2 className="text-xl font-semibold mb-2">
               خدمات الصالون
             </h2>
@@ -464,45 +687,30 @@ export default function RegisterSalonPage() {
               أضف الخدمات والأسعار ومدة كل خدمة
             </p>
 
-            {/* Services */}
-
             <div className="space-y-5">
-
               {services.map((service, index) => (
-
                 <div
                   key={index}
                   className="border border-white/10 rounded-xl p-5"
                 >
-
                   <div className="flex justify-between mb-4">
-
                     <h3 className="font-semibold">
                       الخدمة {index + 1}
                     </h3>
 
                     {services.length > 1 && (
-
                       <button
                         type="button"
-                        onClick={() =>
-                          removeService(index)
-                        }
+                        onClick={() => removeService(index)}
                         className="text-red-400 text-sm hover:text-red-300"
                       >
                         حذف
                       </button>
-
                     )}
-
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-
-                    {/* Service name */}
-
                     <div>
-
                       <label className="block text-sm mb-2">
                         اسم الخدمة *
                       </label>
@@ -515,19 +723,15 @@ export default function RegisterSalonPage() {
                           updateService(
                             index,
                             'name',
-                            e.target.value
+                            e.target.value,
                           )
                         }
                         placeholder="مثال: قص الشعر"
                         className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold"
                       />
-
                     </div>
 
-                    {/* Price */}
-
                     <div>
-
                       <label className="block text-sm mb-2">
                         السعر (دج) *
                       </label>
@@ -541,19 +745,15 @@ export default function RegisterSalonPage() {
                           updateService(
                             index,
                             'price',
-                            e.target.value
+                            e.target.value,
                           )
                         }
                         placeholder="500"
                         className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold"
                       />
-
                     </div>
 
-                    {/* Duration */}
-
                     <div>
-
                       <label className="block text-sm mb-2">
                         المدة (دقيقة) *
                       </label>
@@ -565,49 +765,29 @@ export default function RegisterSalonPage() {
                           updateService(
                             index,
                             'duration',
-                            e.target.value
+                            e.target.value,
                           )
                         }
                         className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold"
                       >
+                        {Array.from({ length: 34 }, (_, i) => {
+                          const minutes = 15 + i * 5
 
-                        <option value="15">
-                          15 دقيقة
-                        </option>
-
-                        <option value="30">
-                          30 دقيقة
-                        </option>
-
-                        <option value="45">
-                          45 دقيقة
-                        </option>
-
-                        <option value="60">
-                          60 دقيقة
-                        </option>
-
-                        <option value="90">
-                          90 دقيقة
-                        </option>
-
-                        <option value="120">
-                          120 دقيقة
-                        </option>
-
+                          return (
+                            <option
+                              key={minutes}
+                              value={String(minutes)}
+                            >
+                              {minutes} دقيقة
+                            </option>
+                          )
+                        })}
                       </select>
-
                     </div>
-
                   </div>
-
                 </div>
-
               ))}
-
             </div>
-
-            {/* Add service */}
 
             <button
               type="button"
@@ -617,10 +797,7 @@ export default function RegisterSalonPage() {
               + إضافة خدمة أخرى
             </button>
 
-            {/* Navigation */}
-
             <div className="flex justify-between mt-8">
-
               <button
                 type="button"
                 onClick={() => setStep(1)}
@@ -631,47 +808,241 @@ export default function RegisterSalonPage() {
 
               <button
                 type="button"
-                onClick={() => setStep(3)}
+                onClick={handleStep2}
                 className="bg-gold text-forest font-semibold px-7 py-3 rounded-xl hover:opacity-90 transition"
               >
                 التالي →
               </button>
-
             </div>
-
           </div>
-
         )}
 
-        {/* ================================================== */}
-        {/* STEP 3 */}
-        {/* ================================================== */}
-
+        {/* STEP 3 — BARBERS */}
         {step === 3 && (
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-6 md:p-8">
+            <div className="mb-8">
+              <h2 className="text-xl font-semibold mb-2">
+                الحلاقون وفريق العمل
+              </h2>
 
+              <p className="text-cream/50 text-sm">
+                أضف كل حلاق مع تخصصاته وخبرته حتى يتمكن الزبون من اختيار الحلاق المناسب عند الحجز.
+              </p>
+            </div>
+
+            <div className="space-y-6">
+              {barbers.map((barber, index) => (
+                <div
+                  key={index}
+                  className="border border-white/10 rounded-2xl p-5 md:p-6"
+                >
+                  <div className="flex items-center justify-between mb-5">
+                    <div>
+                      <h3 className="font-semibold text-lg">
+                        الحلاق {index + 1}
+                      </h3>
+
+                      <p className="text-xs text-cream/40 mt-1">
+                        المعلومات التي ستظهر للزبون
+                      </p>
+                    </div>
+
+                    {barbers.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeBarber(index)}
+                        className="text-red-400 text-sm hover:text-red-300"
+                      >
+                        حذف الحلاق
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div>
+                      <label className="block text-sm mb-2">
+                        الاسم الكامل *
+                      </label>
+
+                      <input
+                        type="text"
+                        required
+                        value={barber.name}
+                        onChange={(e) =>
+                          updateBarber(
+                            index,
+                            'name',
+                            e.target.value,
+                          )
+                        }
+                        placeholder="مثال: محمد بوعلام"
+                        className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm mb-2">
+                        سنوات الخبرة *
+                      </label>
+
+                      <input
+                        type="number"
+                        min="0"
+                        max="60"
+                        required
+                        value={barber.experience}
+                        onChange={(e) =>
+                          updateBarber(
+                            index,
+                            'experience',
+                            e.target.value,
+                          )
+                        }
+                        placeholder="مثال: 7"
+                        className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm mb-2">
+                        اللغات
+                      </label>
+
+                      <input
+                        type="text"
+                        value={barber.languages}
+                        onChange={(e) =>
+                          updateBarber(
+                            index,
+                            'languages',
+                            e.target.value,
+                          )
+                        }
+                        placeholder="العربية، الفرنسية"
+                        className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm mb-2">
+                        صورة الحلاق
+                      </label>
+
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) =>
+                          setBarbers((prev) =>
+                            prev.map((item, i) =>
+                              i === index
+                                ? {
+                                    ...item,
+                                    photo:
+                                      e.target.files?.[0] ||
+                                      null,
+                                  }
+                                : item,
+                            ),
+                          )
+                        }
+                        className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 text-sm"
+                      />
+
+                      {barber.photo && (
+                        <p className="text-gold text-xs mt-2">
+                          {barber.photo.name}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <label className="block text-sm mb-3">
+                        التخصصات والخبرات * — اختر واحداً على الأقل
+                      </label>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                        {specialtyOptions.map((specialty) => {
+                          const checked =
+                            barber.specialties.includes(
+                              specialty,
+                            )
+
+                          return (
+                            <label
+                              key={specialty}
+                              className={`cursor-pointer rounded-xl border px-3 py-3 text-sm transition ${
+                                checked
+                                  ? 'border-gold bg-gold/10 text-gold'
+                                  : 'border-white/10 bg-black/10 text-cream/70 hover:border-white/20'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() =>
+                                  toggleBarberSpecialty(
+                                    index,
+                                    specialty,
+                                  )
+                                }
+                                className="sr-only"
+                              />
+
+                              <span>{specialty}</span>
+                            </label>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={addBarber}
+              className="mt-6 w-full border border-dashed border-gold/40 text-gold rounded-xl py-3 hover:bg-gold/5 transition"
+            >
+              + إضافة حلاق آخر
+            </button>
+
+            <div className="flex justify-between mt-8">
+              <button
+                type="button"
+                onClick={() => setStep(2)}
+                className="border border-white/10 px-7 py-3 rounded-xl text-cream/70 hover:text-cream transition"
+              >
+                ← السابق
+              </button>
+
+              <button
+                type="button"
+                onClick={handleStep3}
+                className="bg-gold text-forest font-semibold px-7 py-3 rounded-xl hover:opacity-90 transition"
+              >
+                التالي →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* STEP 4 */}
+        {step === 4 && (
           <form
             onSubmit={handleSubmit}
             className="bg-white/5 border border-white/10 rounded-2xl p-6 md:p-8"
           >
-
             <h2 className="text-xl font-semibold mb-2">
               الصور والتواصل
             </h2>
 
             <p className="text-cream/50 text-sm mb-8">
-              أضف صور الصالون ومعلومات التواصل وأوقات العمل
+              أضف صور الصالون ومعلومات التواصل وأوقات العمل.
             </p>
 
-            {/* ======================== */}
-            {/* IMAGES */}
-            {/* ======================== */}
-
             <div className="space-y-6">
-
-              {/* Logo */}
-
               <div>
-
                 <label className="block text-sm mb-2">
                   شعار الصالون
                 </label>
@@ -681,7 +1052,7 @@ export default function RegisterSalonPage() {
                   accept="image/*"
                   onChange={(e) =>
                     setLogoFile(
-                      e.target.files?.[0] || null
+                      e.target.files?.[0] || null,
                     )
                   }
                   className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 text-sm"
@@ -692,13 +1063,9 @@ export default function RegisterSalonPage() {
                     {logoFile.name}
                   </p>
                 )}
-
               </div>
 
-              {/* Cover */}
-
               <div>
-
                 <label className="block text-sm mb-2">
                   صورة الغلاف
                 </label>
@@ -708,7 +1075,7 @@ export default function RegisterSalonPage() {
                   accept="image/*"
                   onChange={(e) =>
                     setCoverFile(
-                      e.target.files?.[0] || null
+                      e.target.files?.[0] || null,
                     )
                   }
                   className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 text-sm"
@@ -719,13 +1086,9 @@ export default function RegisterSalonPage() {
                     {coverFile.name}
                   </p>
                 )}
-
               </div>
 
-              {/* Gallery */}
-
               <div>
-
                 <label className="block text-sm mb-2">
                   صور الصالون
                 </label>
@@ -737,8 +1100,8 @@ export default function RegisterSalonPage() {
                   onChange={(e) =>
                     setGalleryFiles(
                       Array.from(
-                        e.target.files || []
-                      )
+                        e.target.files || [],
+                      ),
                     )
                   }
                   className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 text-sm"
@@ -749,36 +1112,25 @@ export default function RegisterSalonPage() {
                     تم اختيار {galleryFiles.length} صور
                   </p>
                 )}
-
               </div>
-
             </div>
 
-            {/* ======================== */}
-            {/* SOCIAL MEDIA */}
-            {/* ======================== */}
-
             <div className="mt-10">
-
               <h3 className="text-lg font-semibold mb-5">
                 معلومات التواصل
               </h3>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-
-                {/* Instagram */}
-
                 <div>
-
                   <label className="block text-sm mb-2">
                     Instagram
                   </label>
 
                   <input
                     type="text"
-                    value={step3.instagram}
+                    value={step4.instagram}
                     onChange={(e) =>
-                      setStep3((prev) => ({
+                      setStep4((prev) => ({
                         ...prev,
                         instagram: e.target.value,
                       }))
@@ -786,22 +1138,18 @@ export default function RegisterSalonPage() {
                     placeholder="@your_salon"
                     className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold"
                   />
-
                 </div>
 
-                {/* Facebook */}
-
                 <div>
-
                   <label className="block text-sm mb-2">
                     Facebook
                   </label>
 
                   <input
                     type="text"
-                    value={step3.facebook}
+                    value={step4.facebook}
                     onChange={(e) =>
-                      setStep3((prev) => ({
+                      setStep4((prev) => ({
                         ...prev,
                         facebook: e.target.value,
                       }))
@@ -809,22 +1157,18 @@ export default function RegisterSalonPage() {
                     placeholder="facebook.com/..."
                     className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold"
                   />
-
                 </div>
 
-                {/* WhatsApp */}
-
                 <div>
-
                   <label className="block text-sm mb-2">
                     WhatsApp
                   </label>
 
                   <input
                     type="tel"
-                    value={step3.whatsapp}
+                    value={step4.whatsapp}
                     onChange={(e) =>
-                      setStep3((prev) => ({
+                      setStep4((prev) => ({
                         ...prev,
                         whatsapp: e.target.value,
                       }))
@@ -832,25 +1176,16 @@ export default function RegisterSalonPage() {
                     placeholder="05 XX XX XX XX"
                     className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold"
                   />
-
                 </div>
-
               </div>
-
             </div>
 
-            {/* ======================== */}
-            {/* OPENING HOURS */}
-            {/* ======================== */}
-
             <div className="mt-10">
-
               <h3 className="text-lg font-semibold mb-5">
                 أوقات العمل
               </h3>
 
               <div className="space-y-3">
-
                 {[
                   ['saturday', 'السبت'],
                   ['sunday', 'الأحد'],
@@ -860,12 +1195,10 @@ export default function RegisterSalonPage() {
                   ['thursday', 'الخميس'],
                   ['friday', 'الجمعة'],
                 ].map(([key, label]) => (
-
                   <div
                     key={key}
                     className="flex items-center gap-4"
                   >
-
                     <div className="w-24 text-sm text-cream/70">
                       {label}
                     </div>
@@ -873,12 +1206,12 @@ export default function RegisterSalonPage() {
                     <input
                       type="text"
                       value={
-                        step3.openingHours[
+                        step4.openingHours[
                           key as keyof OpeningHours
                         ]
                       }
                       onChange={(e) =>
-                        setStep3((prev) => ({
+                        setStep4((prev) => ({
                           ...prev,
                           openingHours: {
                             ...prev.openingHours,
@@ -889,24 +1222,15 @@ export default function RegisterSalonPage() {
                       placeholder="09:00 - 18:00"
                       className="flex-1 bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold"
                     />
-
                   </div>
-
                 ))}
-
               </div>
-
             </div>
 
-            {/* ======================== */}
-            {/* FINAL BUTTONS */}
-            {/* ======================== */}
-
             <div className="flex justify-between mt-10">
-
               <button
                 type="button"
-                onClick={() => setStep(2)}
+                onClick={() => setStep(3)}
                 className="border border-white/10 px-7 py-3 rounded-xl text-cream/70 hover:text-cream transition"
               >
                 ← السابق
@@ -918,13 +1242,9 @@ export default function RegisterSalonPage() {
               >
                 إنشاء الصالون ✓
               </button>
-
             </div>
-
           </form>
-
         )}
-
       </div>
     </div>
   )

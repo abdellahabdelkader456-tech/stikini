@@ -65,6 +65,25 @@ interface StoreValue {
   user: User | null
   isReady: boolean
 
+  /* Admin */
+  isAdmin: boolean
+  pendingSalons: Salon[]
+  loadPendingSalons: () => Promise<void>
+  approveSalon: (
+    salonId: string,
+  ) => Promise<{
+    ok: boolean
+    error?: string
+    message?: string
+  }>
+  rejectSalon: (
+    salonId: string,
+  ) => Promise<{
+    ok: boolean
+    error?: string
+    message?: string
+  }>
+
   salons: Salon[]
 
   allBookings: Booking[]
@@ -77,14 +96,14 @@ interface StoreValue {
   favorites: string[]
   toasts: ToastItem[]
 
-login: (
-  email: string,
-  password: string,
-) => Promise<{
-  ok: boolean
-  error?: string
-  message?: string
-}>
+  login: (
+    email: string,
+    password: string,
+  ) => Promise<{
+    ok: boolean
+    error?: string
+    message?: string
+  }>
 
   register: (input: {
     name: string
@@ -99,20 +118,21 @@ login: (
   }>
 
   logout: () => Promise<void>
-createBooking: (
-  input: NewBookingInput,
-) => Promise<
-  | {
-      ok: true
-      booking: Booking
-      message?: string
-    }
-  | {
-      ok: false
-      error: string
-      message?: string
-    }
->
+
+  createBooking: (
+    input: NewBookingInput,
+  ) => Promise<
+    | {
+        ok: true
+        booking: Booking
+        message?: string
+      }
+    | {
+        ok: false
+        error: string
+        message?: string
+      }
+  >
 
   cancelBooking: (
     bookingId: string,
@@ -457,6 +477,12 @@ export function StoreProvider({
   const [user, setUser] =
     useState<User | null>(null)
 
+  const [isAdmin, setIsAdmin] =
+    useState(false)
+
+  const [pendingSalons, setPendingSalons] =
+    useState<Salon[]>([])
+
   const [isReady, setIsReady] =
     useState(false)
 
@@ -677,7 +703,9 @@ export function StoreProvider({
 
       if (!session?.user) {
         setUser(null)
+        setIsAdmin(false)
         setFavorites([])
+        setPendingSalons([])
         return
       }
 
@@ -698,6 +726,10 @@ export function StoreProvider({
       if (profile) {
         setUser(
           mapProfile(profile),
+        )
+
+        setIsAdmin(
+          profile.is_admin === true,
         )
       } else {
         setUser({
@@ -738,6 +770,8 @@ export function StoreProvider({
             authUser.created_at ??
             new Date().toISOString(),
         })
+
+        setIsAdmin(false)
       }
 
       const {
@@ -759,6 +793,277 @@ export function StoreProvider({
         ),
       )
     }, [])
+
+  /* ------------------------------------------------------------------------ */
+  /* Load pending salons - ADMIN                                              */
+  /* ------------------------------------------------------------------------ */
+
+  const loadPendingSalons =
+    useCallback(async () => {
+      try {
+        const {
+          data: {
+            session,
+          },
+        } =
+          await supabase.auth.getSession()
+
+        if (!session?.user) {
+          setPendingSalons([])
+          return
+        }
+
+        const {
+          data: profile,
+          error: profileError,
+        } = await supabase
+          .from('profiles')
+          .select('is_admin')
+          .eq(
+            'id',
+            session.user.id,
+          )
+          .maybeSingle()
+
+        if (
+          profileError ||
+          profile?.is_admin !== true
+        ) {
+          setPendingSalons([])
+          return
+        }
+
+        const {
+          data: salonRows,
+          error: salonError,
+        } = await supabase
+          .from('salons')
+          .select('*')
+          .eq(
+            'status',
+            'pending',
+          )
+          .order(
+            'created_at',
+            {
+              ascending: false,
+            },
+          )
+
+        if (salonError) {
+          console.error(
+            'Error loading pending salons:',
+            salonError,
+          )
+
+          setPendingSalons([])
+          return
+        }
+
+        const mappedSalons: Salon[] =
+          []
+
+        for (const salon of salonRows ?? []) {
+          const salonId =
+            String(salon.id)
+
+          const [
+            servicesResult,
+            barbersResult,
+            imagesResult,
+          ] = await Promise.all([
+            supabase
+              .from('salon_services')
+              .select('*')
+              .eq(
+                'salon_id',
+                salonId,
+              ),
+
+            supabase
+              .from('salon_barbers')
+              .select('*')
+              .eq(
+                'salon_id',
+                salonId,
+              ),
+
+            supabase
+              .from('salon_images')
+              .select('*')
+              .eq(
+                'salon_id',
+                salonId,
+              ),
+          ])
+
+          mappedSalons.push(
+            mapSalon(
+              salon,
+              servicesResult.data ??
+                [],
+              barbersResult.data ??
+                [],
+              imagesResult.data ??
+                [],
+            ),
+          )
+        }
+
+        setPendingSalons(
+          mappedSalons,
+        )
+      } catch (error) {
+        console.error(
+          'Unexpected pending salons loading error:',
+          error,
+        )
+
+        setPendingSalons([])
+      }
+    }, [])
+
+  /* ------------------------------------------------------------------------ */
+  /* Approve salon - ADMIN                                                    */
+  /* ------------------------------------------------------------------------ */
+
+  const approveSalon =
+    useCallback(
+      async (salonId: string) => {
+        try {
+          if (!isAdmin) {
+            return {
+              ok: false,
+              error:
+                'غير مصرح لك بهذه العملية',
+              message:
+                'غير مصرح لك بهذه العملية',
+            }
+          }
+
+          const {
+            error,
+          } = await supabase
+            .from('salons')
+            .update({
+              status: 'approved',
+            })
+            .eq(
+              'id',
+              salonId,
+            )
+
+          if (error) {
+            console.error(
+              'Approve salon error:',
+              error,
+            )
+
+            return {
+              ok: false,
+              error: error.message,
+              message: error.message,
+            }
+          }
+
+          await Promise.all([
+            loadSalons(),
+            loadPendingSalons(),
+          ])
+
+          return {
+            ok: true,
+            message:
+              'تمت الموافقة على الصالون بنجاح',
+          }
+        } catch (error) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : 'حدث خطأ أثناء الموافقة على الصالون'
+
+          return {
+            ok: false,
+            error: message,
+            message,
+          }
+        }
+      },
+      [
+        isAdmin,
+        loadSalons,
+        loadPendingSalons,
+      ],
+    )
+
+  /* ------------------------------------------------------------------------ */
+  /* Reject salon - ADMIN                                                     */
+  /* ------------------------------------------------------------------------ */
+
+  const rejectSalon =
+    useCallback(
+      async (salonId: string) => {
+        try {
+          if (!isAdmin) {
+            return {
+              ok: false,
+              error:
+                'غير مصرح لك بهذه العملية',
+              message:
+                'غير مصرح لك بهذه العملية',
+            }
+          }
+
+          const {
+            error,
+          } = await supabase
+            .from('salons')
+            .update({
+              status: 'rejected',
+            })
+            .eq(
+              'id',
+              salonId,
+            )
+
+          if (error) {
+            console.error(
+              'Reject salon error:',
+              error,
+            )
+
+            return {
+              ok: false,
+              error: error.message,
+              message: error.message,
+            }
+          }
+
+          await loadPendingSalons()
+
+          return {
+            ok: true,
+            message:
+              'تم رفض الصالون',
+          }
+        } catch (error) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : 'حدث خطأ أثناء رفض الصالون'
+
+          return {
+            ok: false,
+            error: message,
+            message,
+          }
+        }
+      },
+      [
+        isAdmin,
+        loadPendingSalons,
+      ],
+    )
 
   /* ------------------------------------------------------------------------ */
   /* Refresh bookings                                                         */
@@ -835,7 +1140,9 @@ export function StoreProvider({
         ) => {
           if (!session) {
             setUser(null)
+            setIsAdmin(false)
             setFavorites([])
+            setPendingSalons([])
             return
           }
 
@@ -857,22 +1164,52 @@ export function StoreProvider({
   /* Login                                                                    */
   /* ------------------------------------------------------------------------ */
 
- const login = useCallback(
-  async (
-    email: string,
-    password: string,
-  ) => {
-    try {
-      const {
-        data,
-        error,
-      } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      })
+  const login = useCallback(
+    async (
+      email: string,
+      password: string,
+    ) => {
+      try {
+        const {
+          data,
+          error,
+        } =
+          await supabase.auth.signInWithPassword({
+            email: email.trim(),
+            password,
+          })
 
-      if (error) {
-        const message = authErrorMessage(error)
+        if (error) {
+          const message =
+            authErrorMessage(error)
+
+          return {
+            ok: false,
+            error: message,
+            message,
+          }
+        }
+
+        if (!data.user) {
+          return {
+            ok: false,
+            error:
+              'تعذر تسجيل الدخول',
+            message:
+              'تعذر تسجيل الدخول',
+          }
+        }
+
+        await loadUserData()
+
+        return {
+          ok: true,
+          message:
+            'تم تسجيل الدخول بنجاح',
+        }
+      } catch (error) {
+        const message =
+          authErrorMessage(error)
 
         return {
           ok: false,
@@ -880,33 +1217,9 @@ export function StoreProvider({
           message,
         }
       }
-
-      if (!data.user) {
-        return {
-          ok: false,
-          error: 'تعذر تسجيل الدخول',
-          message: 'تعذر تسجيل الدخول',
-        }
-      }
-
-      await loadUserData()
-
-      return {
-        ok: true,
-        message: 'تم تسجيل الدخول بنجاح',
-      }
-    } catch (error) {
-      const message = authErrorMessage(error)
-
-      return {
-        ok: false,
-        error: message,
-        message,
-      }
-    }
-  },
-  [loadUserData],
-)
+    },
+    [loadUserData],
+  )
 
   /* ------------------------------------------------------------------------ */
   /* Register                                                                 */
@@ -1030,155 +1343,181 @@ export function StoreProvider({
       }
 
       setUser(null)
+      setIsAdmin(false)
       setFavorites([])
+      setPendingSalons([])
     }, [])
 
   /* ------------------------------------------------------------------------ */
   /* Create booking                                                           */
   /* ------------------------------------------------------------------------ */
 
- const createBooking = useCallback(
-  async (
-    input: NewBookingInput,
-  ) => {
-    try {
-      const {
-        data: { user: authUser },
-      } = await supabase.auth.getUser()
+  const createBooking = useCallback(
+    async (
+      input: NewBookingInput,
+    ) => {
+      try {
+        const {
+          data: { user: authUser },
+        } =
+          await supabase.auth.getUser()
 
-      const subtotal = input.services.reduce(
-        (sum, service) =>
-          sum + Number(service.price),
-        0,
-      )
-
-      let discount = 0
-
-      if (input.promoCode) {
-        const promo =
-          PROMO_CODES[input.promoCode]
-
-        if (promo) {
-          discount = Math.round(
-            subtotal *
-              (promo.percent / 100),
+        const subtotal =
+          input.services.reduce(
+            (sum, service) =>
+              sum +
+              Number(
+                service.price,
+              ),
+            0,
           )
 
-          discount = Math.min(
-            discount,
-            subtotal,
-          )
+        let discount = 0
+
+        if (input.promoCode) {
+          const promo =
+            PROMO_CODES[
+              input.promoCode
+            ]
+
+          if (promo) {
+            discount =
+              Math.round(
+                subtotal *
+                  (promo.percent /
+                    100),
+              )
+
+            discount = Math.min(
+              discount,
+              subtotal,
+            )
+          }
         }
-      }
 
-      const totalPrice = Math.max(
-        0,
-        subtotal - discount,
-      )
+        const totalPrice =
+          Math.max(
+            0,
+            subtotal - discount,
+          )
 
-      const bookingCode =
-        generateBookingCode()
+        const bookingCode =
+          generateBookingCode()
 
-      const bookingPayload = {
-        code: bookingCode,
+        const bookingPayload = {
+          code: bookingCode,
 
-        salon_id: input.salonId,
+          salon_id:
+            input.salonId,
 
-        salon_name: input.salonName,
+          salon_name:
+            input.salonName,
 
-        services: input.services.map(
-          (service) => ({
-            id: service.id,
-            name: service.name,
-            price: service.price,
-            duration: service.duration,
-          }),
-        ),
+          services:
+            input.services.map(
+              (service) => ({
+                id: service.id,
+                name: service.name,
+                price: service.price,
+                duration:
+                  service.duration,
+              }),
+            ),
 
-        barber_name: input.barberName,
+          barber_name:
+            input.barberName,
 
-        date: input.date,
+          date: input.date,
 
-        time: input.time,
+          time: input.time,
 
-        client_name: input.clientName,
+          client_name:
+            input.clientName,
 
-        phone: input.phone,
+          phone: input.phone,
 
-        email: input.email,
+          email: input.email,
 
-        notes: input.notes,
+          notes: input.notes,
 
-        total_price: totalPrice,
+          total_price:
+            totalPrice,
 
-        discount,
+          discount,
 
-        promo_code:
-          input.promoCode || null,
+          promo_code:
+            input.promoCode ||
+            null,
 
-        user_id:
-          authUser?.id ?? null,
+          user_id:
+            authUser?.id ?? null,
 
-        status: 'مؤكد',
-      }
+          status: 'مؤكد',
+        }
 
-      const {
-        data,
-        error,
-      } = await supabase
-        .from('bookings')
-        .insert(bookingPayload)
-        .select()
-        .single()
-
-      if (error) {
-        console.error(
-          'Create booking error:',
+        const {
+          data,
           error,
+        } = await supabase
+          .from('bookings')
+          .insert(
+            bookingPayload,
+          )
+          .select()
+          .single()
+
+        if (error) {
+          console.error(
+            'Create booking error:',
+            error,
+          )
+
+          return {
+            ok: false as const,
+            error:
+              error.message,
+            message:
+              error.message,
+          }
+        }
+
+        const booking =
+          mapBooking(data)
+
+        setAllBookings(
+          (current) => [
+            booking,
+            ...current,
+          ],
         )
 
         return {
+          ok: true as const,
+          booking,
+          message:
+            'تم إنشاء الحجز بنجاح',
+        }
+      } catch (error) {
+        console.error(
+          'Unexpected create booking error:',
+          error,
+        )
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'حدث خطأ أثناء إنشاء الحجز'
+
+        return {
           ok: false as const,
-          error: error.message,
-          message: error.message,
+          error: message,
+          message,
         }
       }
+    },
+    [],
+  )
 
-      const booking = mapBooking(data)
-
-      setAllBookings(
-        (current) => [
-          booking,
-          ...current,
-        ],
-      )
-
-      return {
-        ok: true as const,
-        booking,
-        message:
-          'تم إنشاء الحجز بنجاح',
-      }
-    } catch (error) {
-      console.error(
-        'Unexpected create booking error:',
-        error,
-      )
-
-      const message =
-        error instanceof Error
-          ? error.message
-          : 'حدث خطأ أثناء إنشاء الحجز'
-
-      return {
-        ok: false as const,
-        error: message,
-        message,
-      }
-    }
-  },
-  [],
-)
   /* ------------------------------------------------------------------------ */
   /* Cancel booking                                                           */
   /* ------------------------------------------------------------------------ */
@@ -1544,6 +1883,12 @@ export function StoreProvider({
         user,
         isReady,
 
+        isAdmin,
+        pendingSalons,
+        loadPendingSalons,
+        approveSalon,
+        rejectSalon,
+
         salons,
 
         allBookings,
@@ -1582,6 +1927,13 @@ export function StoreProvider({
       [
         user,
         isReady,
+
+        isAdmin,
+        pendingSalons,
+        loadPendingSalons,
+        approveSalon,
+        rejectSalon,
+
         salons,
 
         allBookings,

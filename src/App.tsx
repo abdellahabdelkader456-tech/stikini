@@ -18,6 +18,7 @@ import PrivacyPage from './pages/PrivacyPage'
 import TermsPage from './pages/TermsPage'
 import NotFoundPage from './pages/NotFoundPage'
 import RegisterSalonPage from './pages/RegisterSalonPage'
+import AdminSalonsPage from './pages/AdminSalonsPage'
 
 function ScrollToTop() {
   const { pathname } = useLocation()
@@ -58,6 +59,15 @@ export default function App() {
   element={
     <RequireAuth>
       <RegisterSalonPage />
+    </RequireAuth>
+  }
+/>
+
+<Route
+  path="/admin/salons"
+  element={
+    <RequireAuth>
+      <AdminSalonsPage />
     </RequireAuth>
   }
 />

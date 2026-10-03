@@ -19,7 +19,7 @@ import type {
   User,
 } from './types'
 
-import { PROMO_CODES, SALONS } from './data'
+import { PROMO_CODES } from './data'
 import { generateBookingCode } from './utils'
 import { supabase } from './supabase'
 
@@ -500,7 +500,7 @@ export function StoreProvider({
    * Approved Supabase salons are added later.
    */
   const [salons, setSalons] =
-    useState<Salon[]>(SALONS)
+    useState<Salon[]>([])
 
   /* ------------------------------------------------------------------------ */
   /* Toasts                                                                   */
@@ -547,146 +547,99 @@ export function StoreProvider({
   /* ------------------------------------------------------------------------ */
   /* Load salons                                                              */
   /* ------------------------------------------------------------------------ */
+const loadSalons =
+  useCallback(async () => {
+    try {
+      const {
+        data: salonRows,
+        error: salonError,
+      } = await supabase
+        .from('salons')
+        .select('*')
+        .eq('status', 'approved')
 
-  const loadSalons =
-    useCallback(async () => {
-      try {
-        const {
-          data: salonRows,
-          error: salonError,
-        } = await supabase
-          .from('salons')
-          .select('*')
-          .eq('status', 'approved')
-
-        if (salonError) {
-          console.error(
-            'Error loading salons:',
-            salonError,
-          )
-
-          setSalons(SALONS)
-          return
-        }
-
-        if (
-          !salonRows ||
-          salonRows.length === 0
-        ) {
-          setSalons(SALONS)
-          return
-        }
-
-        const mappedSalons: Salon[] =
-          []
-
-        for (const salon of salonRows) {
-          const salonId =
-            String(salon.id)
-
-          const [
-            servicesResult,
-            barbersResult,
-            imagesResult,
-          ] = await Promise.all([
-            supabase
-              .from('salon_services')
-              .select('*')
-              .eq(
-                'salon_id',
-                salonId,
-              ),
-
-            supabase
-              .from('salon_barbers')
-              .select('*')
-              .eq(
-                'salon_id',
-                salonId,
-              ),
-
-            supabase
-              .from('salon_images')
-              .select('*')
-              .eq(
-                'salon_id',
-                salonId,
-              ),
-          ])
-
-          if (
-            servicesResult.error
-          ) {
-            console.error(
-              'Error loading salon services:',
-              servicesResult.error,
-            )
-          }
-
-          if (
-            barbersResult.error
-          ) {
-            console.error(
-              'Error loading salon barbers:',
-              barbersResult.error,
-            )
-          }
-
-          if (
-            imagesResult.error
-          ) {
-            console.error(
-              'Error loading salon images:',
-              imagesResult.error,
-            )
-          }
-
-          mappedSalons.push(
-            mapSalon(
-              salon,
-              servicesResult.data ??
-                [],
-              barbersResult.data ??
-                [],
-              imagesResult.data ??
-                [],
-            ),
-          )
-        }
-
-        /*
-         * Keep static salons and add
-         * Supabase salons without duplicates.
-         */
-        const supabaseIds =
-          new Set(
-            mappedSalons.map(
-              (salon) =>
-                salon.id,
-            ),
-          )
-
-        const staticSalons =
-          SALONS.filter(
-            (salon) =>
-              !supabaseIds.has(
-                salon.id,
-              ),
-          )
-
-        setSalons([
-          ...staticSalons,
-          ...mappedSalons,
-        ])
-      } catch (error) {
+      if (salonError) {
         console.error(
-          'Unexpected salon loading error:',
-          error,
+          'Error loading salons:',
+          salonError,
         )
 
-        setSalons(SALONS)
+        setSalons([])
+        return
       }
-    }, [])
+
+      if (!salonRows) {
+        setSalons([])
+        return
+      }
+
+      const mappedSalons: Salon[] = []
+
+      for (const salon of salonRows) {
+        const salonId = String(salon.id)
+
+        const [
+          servicesResult,
+          barbersResult,
+          imagesResult,
+        ] = await Promise.all([
+          supabase
+            .from('salon_services')
+            .select('*')
+            .eq('salon_id', salonId),
+
+          supabase
+            .from('salon_barbers')
+            .select('*')
+            .eq('salon_id', salonId),
+
+          supabase
+            .from('salon_images')
+            .select('*')
+            .eq('salon_id', salonId),
+        ])
+
+        if (servicesResult.error) {
+          console.error(
+            'Error loading salon services:',
+            servicesResult.error,
+          )
+        }
+
+        if (barbersResult.error) {
+          console.error(
+            'Error loading salon barbers:',
+            barbersResult.error,
+          )
+        }
+
+        if (imagesResult.error) {
+          console.error(
+            'Error loading salon images:',
+            imagesResult.error,
+          )
+        }
+
+        mappedSalons.push(
+          mapSalon(
+            salon,
+            servicesResult.data ?? [],
+            barbersResult.data ?? [],
+            imagesResult.data ?? [],
+          ),
+        )
+      }
+
+      setSalons(mappedSalons)
+    } catch (error) {
+      console.error(
+        'Unexpected salon loading error:',
+        error,
+      )
+
+      setSalons([])
+    }
+  }, [])
 
   /* ------------------------------------------------------------------------ */
   /* Load user                                                                 */

@@ -15,15 +15,48 @@ type Barber = {
   photo: File | null
 }
 
-type OpeningHours = {
-  saturday: string
-  sunday: string
-  monday: string
-  tuesday: string
-  wednesday: string
-  thursday: string
-  friday: string
+type OpeningHour = {
+  from: string
+  to: string
+  closed: boolean
 }
+
+type OpeningHours = {
+  saturday: OpeningHour
+  sunday: OpeningHour
+  monday: OpeningHour
+  tuesday: OpeningHour
+  wednesday: OpeningHour
+  thursday: OpeningHour
+  friday: OpeningHour
+}
+
+const DAYS = [
+  ['saturday', 'السبت'],
+  ['sunday', 'الأحد'],
+  ['monday', 'الإثنين'],
+  ['tuesday', 'الثلاثاء'],
+  ['wednesday', 'الأربعاء'],
+  ['thursday', 'الخميس'],
+  ['friday', 'الجمعة'],
+] as const
+
+const TIME_OPTIONS = Array.from({ length: 288 }, (_, index) => {
+  const totalMinutes = index * 5
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+})
+
+const createDefaultOpeningHours = (): OpeningHours => ({
+  saturday: { from: '09:00', to: '18:00', closed: false },
+  sunday: { from: '09:00', to: '18:00', closed: false },
+  monday: { from: '09:00', to: '18:00', closed: false },
+  tuesday: { from: '09:00', to: '18:00', closed: false },
+  wednesday: { from: '09:00', to: '18:00', closed: false },
+  thursday: { from: '09:00', to: '18:00', closed: false },
+  friday: { from: '09:00', to: '18:00', closed: false },
+})
 
 const specialtyOptions = [
   'قص الشعر',
@@ -74,15 +107,7 @@ export default function RegisterSalonPage() {
     instagram: '',
     facebook: '',
     whatsapp: '',
-    openingHours: {
-      saturday: '',
-      sunday: '',
-      monday: '',
-      tuesday: '',
-      wednesday: '',
-      thursday: '',
-      friday: '',
-    } as OpeningHours,
+    openingHours: createDefaultOpeningHours(),
   })
 
   const [logoFile, setLogoFile] = useState<File | null>(null)
@@ -213,8 +238,32 @@ export default function RegisterSalonPage() {
     return fileName.replace(/[^\w.\-]+/g, '-')
   }
 
+  const openingHoursForDatabase = () =>
+    Object.fromEntries(
+      Object.entries(step4.openingHours).map(([day, hours]) => [
+        day,
+        hours.closed ? 'مغلق' : `${hours.from} - ${hours.to}`,
+      ]),
+    )
+
+  const validateOpeningHours = () => {
+    for (const [day, hours] of Object.entries(step4.openingHours)) {
+      if (hours.closed) continue
+
+      if (hours.from >= hours.to) {
+        const label = DAYS.find(([key]) => key === day)?.[1] ?? day
+        alert(`وقت الانتهاء يجب أن يكون بعد وقت البداية ليوم ${label}.`)
+        return false
+      }
+    }
+
+    return true
+  }
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
+
+    if (!validateOpeningHours()) return
 
     try {
       // 1. Get logged-in user
@@ -241,6 +290,7 @@ export default function RegisterSalonPage() {
         name: form.name.trim(),
         owner_id: user.id,
         phone: form.phone.trim(),
+        chairs: Number(form.chairs),
         address: form.address.trim(),
         description: form.description.trim() || null,
         wilaya: form.wilaya.trim(),
@@ -249,12 +299,24 @@ export default function RegisterSalonPage() {
         instagram: step4.instagram.trim() || null,
         facebook: step4.facebook.trim() || null,
         whatsapp: step4.whatsapp.trim() || null,
-        opening_hours: step4.openingHours,
+        opening_hours: openingHoursForDatabase(),
         status: 'pending',
       })
 
       if (salonError) {
         throw salonError
+      }
+
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({
+          type: 'owner',
+          salon_id: salonId,
+        })
+        .eq('id', user.id)
+
+      if (profileError) {
+        throw profileError
       }
 
       // 4. Upload logo
@@ -429,15 +491,7 @@ export default function RegisterSalonPage() {
         instagram: '',
         facebook: '',
         whatsapp: '',
-        openingHours: {
-          saturday: '',
-          sunday: '',
-          monday: '',
-          tuesday: '',
-          wednesday: '',
-          thursday: '',
-          friday: '',
-        },
+        openingHours: createDefaultOpeningHours(),
       })
 
       setLogoFile(null)
@@ -1186,44 +1240,74 @@ export default function RegisterSalonPage() {
               </h3>
 
               <div className="space-y-3">
-                {[
-                  ['saturday', 'السبت'],
-                  ['sunday', 'الأحد'],
-                  ['monday', 'الإثنين'],
-                  ['tuesday', 'الثلاثاء'],
-                  ['wednesday', 'الأربعاء'],
-                  ['thursday', 'الخميس'],
-                  ['friday', 'الجمعة'],
-                ].map(([key, label]) => (
-                  <div
-                    key={key}
-                    className="flex items-center gap-4"
-                  >
-                    <div className="w-24 text-sm text-cream/70">
-                      {label}
-                    </div>
+                {DAYS.map(([key, label]) => {
+                  const hours = step4.openingHours[key]
 
-                    <input
-                      type="text"
-                      value={
-                        step4.openingHours[
-                          key as keyof OpeningHours
-                        ]
-                      }
-                      onChange={(e) =>
-                        setStep4((prev) => ({
-                          ...prev,
-                          openingHours: {
-                            ...prev.openingHours,
-                            [key]: e.target.value,
-                          },
-                        }))
-                      }
-                      placeholder="09:00 - 18:00"
-                      className="flex-1 bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold"
-                    />
-                  </div>
-                ))}
+                  return (
+                    <div
+                      key={key}
+                      className="grid grid-cols-1 md:grid-cols-[100px_1fr_1fr_auto] items-center gap-3"
+                    >
+                      <div className="text-sm text-cream/70">{label}</div>
+
+                      <select
+                        value={hours.from}
+                        disabled={hours.closed}
+                        onChange={(e) =>
+                          setStep4((prev) => ({
+                            ...prev,
+                            openingHours: {
+                              ...prev.openingHours,
+                              [key]: { ...prev.openingHours[key], from: e.target.value },
+                            },
+                          }))
+                        }
+                        className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold disabled:opacity-40"
+                      >
+                        {TIME_OPTIONS.map((time) => (
+                          <option key={time} value={time}>من {time}</option>
+                        ))}
+                      </select>
+
+                      <select
+                        value={hours.to}
+                        disabled={hours.closed}
+                        onChange={(e) =>
+                          setStep4((prev) => ({
+                            ...prev,
+                            openingHours: {
+                              ...prev.openingHours,
+                              [key]: { ...prev.openingHours[key], to: e.target.value },
+                            },
+                          }))
+                        }
+                        className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold disabled:opacity-40"
+                      >
+                        {TIME_OPTIONS.map((time) => (
+                          <option key={time} value={time}>إلى {time}</option>
+                        ))}
+                      </select>
+
+                      <label className="flex items-center gap-2 text-sm text-cream/70 whitespace-nowrap">
+                        <input
+                          type="checkbox"
+                          checked={hours.closed}
+                          onChange={(e) =>
+                            setStep4((prev) => ({
+                              ...prev,
+                              openingHours: {
+                                ...prev.openingHours,
+                                [key]: { ...prev.openingHours[key], closed: e.target.checked },
+                              },
+                            }))
+                          }
+                          className="accent-gold"
+                        />
+                        مغلق
+                      </label>
+                    </div>
+                  )
+                })}
               </div>
             </div>
 

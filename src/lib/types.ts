@@ -42,12 +42,16 @@ export interface Salon {
   rating: number
   reviewsCount: number
   priceLevel: 1 | 2 | 3
+
   image: string
+  logo?: string
   gallery: string[]
+
   services: SalonService[]
   barbers: Barber[]
   reviews: SalonReview[]
   features: string[]
+
   workingHours: string
   isOpen: boolean
   featured: boolean
@@ -80,8 +84,10 @@ export interface Booking {
   totalPrice: number
   discount: number
   promoCode?: string
+
   /** صاحب الحجز — يُستخدم لعرض حجوزات كل زبون له فقط */
   userId?: string
+
   status: BookingStatus
   createdAt: string
 }
@@ -92,8 +98,10 @@ export interface User {
   email: string
   phone: string
   type: 'client' | 'owner'
-  /** الصالون الذي يديره صاحب الحساب (لحسابات أصحاب الصالونات فقط) */
+
+  /** الصالون الذي يديره صاحب الحساب */
   salonId?: string
+
   createdAt: string
 }
 

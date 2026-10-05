@@ -523,7 +523,7 @@ const salon = salons.find((s) => s.slug === slug)
 
             {activeTab === 'gallery' && (
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
-                {[...salon.gallery, ...salon.gallery].slice(0, 8).map((img, i) => (
+                {salon.gallery.map((img, i) => (
                   <motion.button
                     key={i}
                     initial={{ opacity: 0, scale: 0.94 }}

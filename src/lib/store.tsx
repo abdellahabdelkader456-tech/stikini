@@ -69,6 +69,7 @@ interface StoreValue {
   isAdmin: boolean
   pendingSalons: Salon[]
   loadPendingSalons: () => Promise<void>
+
   approveSalon: (
     salonId: string,
   ) => Promise<{
@@ -76,6 +77,7 @@ interface StoreValue {
     error?: string
     message?: string
   }>
+
   rejectSalon: (
     salonId: string,
   ) => Promise<{
@@ -89,7 +91,6 @@ interface StoreValue {
   allBookings: Booking[]
   bookings: Booking[]
   myBookings: Booking[]
-
   salonBookings: Booking[]
   ownerSalonBookings: Booking[]
 
@@ -162,20 +163,30 @@ interface StoreValue {
 
   refreshPublicBookings: () => Promise<void>
 
-  setOwnerSalon: (salonId: string) => Promise<void>
+  setOwnerSalon: (
+    salonId: string,
+  ) => Promise<void>
 
-  toggleFavorite: (salonId: string) => Promise<void>
+  toggleFavorite: (
+    salonId: string,
+  ) => Promise<void>
 
-  isFavorite: (salonId: string) => boolean
+  isFavorite: (
+    salonId: string,
+  ) => boolean
 
   showToast: (
     message: string,
     type?: ToastItem['type'],
   ) => void
 
-  removeToast: (id: string) => void
+  removeToast: (
+    id: string,
+  ) => void
 
-  dismissToast: (id: string) => void
+  dismissToast: (
+    id: string,
+  ) => void
 }
 
 /* -------------------------------------------------------------------------- */
@@ -199,7 +210,8 @@ function mapProfile(row: any): User {
     type: row.type === 'owner' ? 'owner' : 'client',
     salonId: row.salon_id ?? undefined,
     createdAt:
-      row.created_at ?? new Date().toISOString(),
+      row.created_at ??
+      new Date().toISOString(),
   }
 }
 
@@ -208,16 +220,15 @@ function mapProfile(row: any): User {
 /* -------------------------------------------------------------------------- */
 
 function mapBooking(row: any): Booking {
-  const services: BookingService[] = Array.isArray(
-    row.services,
-  )
-    ? row.services.map((service: any) => ({
-        id: String(service.id ?? ''),
-        name: String(service.name ?? ''),
-        price: Number(service.price ?? 0),
-        duration: Number(service.duration ?? 0),
-      }))
-    : []
+  const services: BookingService[] =
+    Array.isArray(row.services)
+      ? row.services.map((service: any) => ({
+          id: String(service.id ?? ''),
+          name: String(service.name ?? ''),
+          price: Number(service.price ?? 0),
+          duration: Number(service.duration ?? 0),
+        }))
+      : []
 
   return {
     id: String(row.id),
@@ -241,7 +252,8 @@ function mapBooking(row: any): Booking {
     status:
       row.status ?? 'مؤكد',
     createdAt:
-      row.created_at ?? new Date().toISOString(),
+      row.created_at ??
+      new Date().toISOString(),
   }
 }
 
@@ -263,7 +275,9 @@ function authErrorMessage(error: any): string {
   }
 
   if (
-    message.includes('email not confirmed')
+    message.includes(
+      'email not confirmed',
+    )
   ) {
     return 'يرجى تأكيد بريدك الإلكتروني أولاً'
   }
@@ -301,9 +315,7 @@ function createSalonSlug(
     .replace(/[^\p{L}\p{N}-]+/gu, '')
     .replace(/-+/g, '-')
 
-  return `${
-    cleanName || 'salon'
-  }-${id.slice(0, 8)}`
+  return `${cleanName || 'salon'}-${id.slice(0, 8)}`
 }
 
 /* -------------------------------------------------------------------------- */
@@ -316,61 +328,103 @@ function mapSalon(
   barbersRows: any[],
   imagesRows: any[],
 ): Salon {
+  /* ------------------------------ Services ------------------------------ */
+
   const services: SalonService[] =
-    servicesRows.map((service) => ({
+    servicesRows.map((service: any) => ({
       id: String(service.id),
-      name: service.name ?? '',
+      name: String(service.name ?? ''),
       category:
-        service.category ?? 'خدمات',
-      price: Number(
-        service.price ?? 0,
-      ),
-      duration: Number(
-        service.duration ?? 0,
-      ),
+        String(service.category ?? 'خدمات'),
+      price: Number(service.price ?? 0),
+      duration: Number(service.duration ?? 0),
       description:
-        service.description ?? '',
+        String(service.description ?? ''),
+      popular:
+        service.popular === true,
     }))
 
+  /* ------------------------------- Barbers ------------------------------- */
+
   const barbers: Barber[] =
-    barbersRows.map((barber) => {
+    barbersRows.map((barber: any) => {
       const specialties =
-        Array.isArray(
-          barber.specialties,
-        )
+        Array.isArray(barber.specialties)
           ? barber.specialties.map(String)
           : []
 
       return {
         id: String(barber.id),
-        name: barber.name ?? '',
-        role: 'حلاق',
+        name: String(barber.name ?? ''),
+        role: String(
+          barber.role ?? 'حلاق',
+        ),
         experience: `${Number(
           barber.experience ?? 0,
         )} سنوات`,
-        rating: 5,
-        image:
+        rating: Number(
+          barber.rating ?? 5,
+        ),
+        image: String(
           barber.photo_url ?? '',
+        ),
         specialties,
       }
     })
 
-  const images = imagesRows
-    .map(
-      (image) => image.image_url,
+  /* ------------------------------- Images -------------------------------- */
+
+  const databaseImages = imagesRows
+    .map((image: any) => image.image_url)
+    .filter(
+      (url: any) =>
+        typeof url === 'string' &&
+        url.trim().length > 0,
     )
-    .filter(Boolean)
+    .map((url: string) => url.trim())
 
-  const coverImage =
+  const logoImage = String(
+    salonRow.logo_url ?? '',
+  ).trim()
+
+  const coverFromDatabase = imagesRows.find(
+    (image: any) =>
+      image.is_cover === true ||
+      image.type === 'cover' ||
+      image.image_type === 'cover',
+  )?.image_url
+
+  const coverImage = String(
     salonRow.cover_url ||
-    imagesRows.find(
-      (image) => image.is_cover,
-    )?.image_url ||
-    images[0] ||
-    ''
+      coverFromDatabase ||
+      databaseImages[0] ||
+      '',
+  ).trim()
 
-  let type: Salon['type'] =
-    'رجالية'
+  /*
+   * Keep ALL images:
+   * - logo_url
+   * - cover_url
+   * - salon_images.image_url
+   */
+
+  const gallery = Array.from(
+    new Set(
+      [
+        logoImage,
+        coverImage,
+        ...databaseImages,
+      ].filter(
+        (url): url is string =>
+          typeof url === 'string' &&
+          url.trim().length > 0,
+      ),
+    ),
+  )
+
+  /* -------------------------------- Type --------------------------------- */
+
+  let type: Salon['type'] = 'رجالية'
 
   if (
     salonRow.category === 'نسائية' ||
@@ -380,8 +434,9 @@ function mapSalon(
     type = salonRow.category
   }
 
-  let workingHours =
-    'حسب المواعيد'
+  /* --------------------------- Opening hours ----------------------------- */
+
+  let workingHours = 'حسب المواعيد'
 
   const openingHours =
     salonRow.opening_hours
@@ -395,40 +450,57 @@ function mapSalon(
       Object.values(openingHours)
 
     if (values.length > 0) {
-      workingHours =
-        String(values[0])
+      workingHours = String(
+        values[0],
+      )
     }
   }
+
+  /* ------------------------------- Result -------------------------------- */
 
   return {
     id: String(salonRow.id),
 
     slug: createSalonSlug(
-      salonRow.name ?? 'salon',
+      String(
+        salonRow.name ?? 'salon',
+      ),
       String(salonRow.id),
     ),
 
     name:
-      salonRow.name ?? 'صالون',
+      String(
+        salonRow.name ?? 'صالون',
+      ),
 
     tagline:
-      salonRow.description ?? '',
+      String(
+        salonRow.description ?? '',
+      ),
 
     description:
-      salonRow.description ?? '',
+      String(
+        salonRow.description ?? '',
+      ),
 
     type,
 
     neighborhood:
-      salonRow.commune ||
-      salonRow.wilaya ||
-      'الجزائر العاصمة',
+      String(
+        salonRow.commune ||
+          salonRow.wilaya ||
+          'الجزائر العاصمة',
+      ),
 
     address:
-      salonRow.address ?? '',
+      String(
+        salonRow.address ?? '',
+      ),
 
     phone:
-      salonRow.phone ?? '',
+      String(
+        salonRow.phone ?? '',
+      ),
 
     rating: 5,
 
@@ -438,7 +510,9 @@ function mapSalon(
 
     image: coverImage,
 
-    gallery: images,
+    logo: logoImage,
+
+    gallery,
 
     services,
 
@@ -455,13 +529,13 @@ function mapSalon(
     featured: false,
 
     verified:
-      salonRow.status ===
-      'approved',
+      salonRow.status === 'approved',
 
-    established: new Date(
-      salonRow.created_at ??
-        Date.now(),
-    ).getFullYear(),
+    established:
+      new Date(
+        salonRow.created_at ??
+          Date.now(),
+      ).getFullYear(),
   }
 }
 
@@ -495,10 +569,6 @@ export function StoreProvider({
   const [toasts, setToasts] =
     useState<ToastItem[]>([])
 
-  /*
-   * Keep the original static salons.
-   * Approved Supabase salons are added later.
-   */
   const [salons, setSalons] =
     useState<Salon[]>([])
 
@@ -545,101 +615,107 @@ export function StoreProvider({
   )
 
   /* ------------------------------------------------------------------------ */
-  /* Load salons                                                              */
+  /* Load approved salons                                                     */
   /* ------------------------------------------------------------------------ */
-const loadSalons =
-  useCallback(async () => {
-    try {
-      const {
-        data: salonRows,
-        error: salonError,
-      } = await supabase
-        .from('salons')
-        .select('*')
-        .eq('status', 'approved')
 
-      if (salonError) {
+  const loadSalons =
+    useCallback(async () => {
+      try {
+        const {
+          data: salonRows,
+          error: salonError,
+        } = await supabase
+          .from('salons')
+          .select('*')
+          .eq('status', 'approved')
+
+        if (salonError) {
+          console.error(
+            'Error loading salons:',
+            salonError,
+          )
+
+          setSalons([])
+          return
+        }
+
+        const mappedSalons: Salon[] = []
+
+        for (const salon of salonRows ?? []) {
+          const salonId =
+            String(salon.id)
+
+          const [
+            servicesResult,
+            barbersResult,
+            imagesResult,
+          ] = await Promise.all([
+            supabase
+              .from('salon_services')
+              .select('*')
+              .eq(
+                'salon_id',
+                salonId,
+              ),
+
+            supabase
+              .from('salon_barbers')
+              .select('*')
+              .eq(
+                'salon_id',
+                salonId,
+              ),
+
+            supabase
+              .from('salon_images')
+              .select('*')
+              .eq(
+                'salon_id',
+                salonId,
+              ),
+          ])
+
+          if (servicesResult.error) {
+            console.error(
+              `Services error for salon ${salonId}:`,
+              servicesResult.error,
+            )
+          }
+
+          if (barbersResult.error) {
+            console.error(
+              `Barbers error for salon ${salonId}:`,
+              barbersResult.error,
+            )
+          }
+
+          if (imagesResult.error) {
+            console.error(
+              `Images error for salon ${salonId}:`,
+              imagesResult.error,
+            )
+          }
+
+          mappedSalons.push(
+            mapSalon(
+              salon,
+              servicesResult.data ?? [],
+              barbersResult.data ?? [],
+              imagesResult.data ?? [],
+            ),
+          )
+        }
+
+        setSalons(mappedSalons)
+      } catch (error) {
         console.error(
-          'Error loading salons:',
-          salonError,
+          'Unexpected salon loading error:',
+          error,
         )
 
         setSalons([])
-        return
       }
-
-      if (!salonRows) {
-        setSalons([])
-        return
-      }
-
-      const mappedSalons: Salon[] = []
-
-      for (const salon of salonRows) {
-        const salonId = String(salon.id)
-
-        const [
-          servicesResult,
-          barbersResult,
-          imagesResult,
-        ] = await Promise.all([
-          supabase
-            .from('salon_services')
-            .select('*')
-            .eq('salon_id', salonId),
-
-          supabase
-            .from('salon_barbers')
-            .select('*')
-            .eq('salon_id', salonId),
-
-          supabase
-            .from('salon_images')
-            .select('*')
-            .eq('salon_id', salonId),
-        ])
-
-        if (servicesResult.error) {
-          console.error(
-            'Error loading salon services:',
-            servicesResult.error,
-          )
-        }
-
-        if (barbersResult.error) {
-          console.error(
-            'Error loading salon barbers:',
-            barbersResult.error,
-          )
-        }
-
-        if (imagesResult.error) {
-          console.error(
-            'Error loading salon images:',
-            imagesResult.error,
-          )
-        }
-
-        mappedSalons.push(
-          mapSalon(
-            salon,
-            servicesResult.data ?? [],
-            barbersResult.data ?? [],
-            imagesResult.data ?? [],
-          ),
-        )
-      }
-
-      setSalons(mappedSalons)
-    } catch (error) {
-      console.error(
-        'Unexpected salon loading error:',
-        error,
-      )
-
-      setSalons([])
-    }
-  }, [])
+    }, [])
 
   /* ------------------------------------------------------------------------ */
   /* Load user                                                                 */
@@ -648,9 +724,7 @@ const loadSalons =
   const loadUserData =
     useCallback(async () => {
       const {
-        data: {
-          session,
-        },
+        data: { session },
       } =
         await supabase.auth.getSession()
 
@@ -689,8 +763,7 @@ const loadSalons =
           id: authUser.id,
 
           name:
-            authUser
-              .user_metadata
+            authUser.user_metadata
               ?.name ||
             authUser.email?.split(
               '@',
@@ -701,21 +774,17 @@ const loadSalons =
             authUser.email ?? '',
 
           phone:
-            authUser
-              .user_metadata
+            authUser.user_metadata
               ?.phone ?? '',
 
           type:
-            authUser
-              .user_metadata
-              ?.type ===
-            'owner'
+            authUser.user_metadata
+              ?.type === 'owner'
               ? 'owner'
               : 'client',
 
           salonId:
-            authUser
-              .user_metadata
+            authUser.user_metadata
               ?.salon_id ??
             undefined,
 
@@ -740,9 +809,7 @@ const loadSalons =
       setFavorites(
         (favoriteRows ?? []).map(
           (row) =>
-            String(
-              row.salon_id,
-            ),
+            String(row.salon_id),
         ),
       )
     }, [])
@@ -762,9 +829,15 @@ const loadSalons =
           await supabase.auth.getSession()
 
         if (!session?.user) {
+          console.error(
+            'Pending salons: no authenticated user',
+          )
+
           setPendingSalons([])
           return
         }
+
+        /* --------------------------- Check admin -------------------------- */
 
         const {
           data: profile,
@@ -778,13 +851,26 @@ const loadSalons =
           )
           .maybeSingle()
 
-        if (
-          profileError ||
-          profile?.is_admin !== true
-        ) {
+        if (profileError) {
+          console.error(
+            'Admin profile error:',
+            profileError,
+          )
+
           setPendingSalons([])
           return
         }
+
+        if (profile?.is_admin !== true) {
+          console.error(
+            'Current user is not an admin',
+          )
+
+          setPendingSalons([])
+          return
+        }
+
+        /* -------------------------- Load salons --------------------------- */
 
         const {
           data: salonRows,
@@ -805,7 +891,7 @@ const loadSalons =
 
         if (salonError) {
           console.error(
-            'Error loading pending salons:',
+            'PENDING SALONS ERROR:',
             salonError,
           )
 
@@ -813,12 +899,22 @@ const loadSalons =
           return
         }
 
-        const mappedSalons: Salon[] =
-          []
+        console.log(
+          'Pending salons:',
+          salonRows,
+        )
+
+        const mappedSalons: Salon[] = []
+
+        /* --------------------- Load related information ------------------- */
 
         for (const salon of salonRows ?? []) {
           const salonId =
             String(salon.id)
+
+          console.log(
+            `Loading data for pending salon: ${salon.name} (${salonId})`,
+          )
 
           const [
             servicesResult,
@@ -850,16 +946,71 @@ const loadSalons =
               ),
           ])
 
-          mappedSalons.push(
+          /* ----------------------- Services error ------------------------ */
+
+          if (servicesResult.error) {
+            console.error(
+              `SERVICES ERROR - ${salon.name}:`,
+              servicesResult.error,
+            )
+          } else {
+            console.log(
+              `Services for ${salon.name}:`,
+              servicesResult.data,
+            )
+          }
+
+          /* ------------------------ Barbers error ------------------------- */
+
+          if (barbersResult.error) {
+            console.error(
+              `BARBERS ERROR - ${salon.name}:`,
+              barbersResult.error,
+            )
+          } else {
+            console.log(
+              `Barbers for ${salon.name}:`,
+              barbersResult.data,
+            )
+          }
+
+          /* ------------------------- Images error ------------------------- */
+
+          if (imagesResult.error) {
+            console.error(
+              `IMAGES ERROR - ${salon.name}:`,
+              imagesResult.error,
+            )
+          } else {
+            console.log(
+              `Images for ${salon.name}:`,
+              imagesResult.data,
+            )
+          }
+
+          console.log(
+            `Salon URLs for ${salon.name}:`,
+            {
+              logo_url: salon.logo_url,
+              cover_url: salon.cover_url,
+            },
+          )
+
+          const mappedSalon =
             mapSalon(
               salon,
-              servicesResult.data ??
-                [],
-              barbersResult.data ??
-                [],
-              imagesResult.data ??
-                [],
-            ),
+              servicesResult.data ?? [],
+              barbersResult.data ?? [],
+              imagesResult.data ?? [],
+            )
+
+          console.log(
+            `FINAL MAPPED SALON - ${salon.name}:`,
+            mappedSalon,
+          )
+
+          mappedSalons.push(
+            mappedSalon,
           )
         }
 
@@ -877,7 +1028,7 @@ const loadSalons =
     }, [])
 
   /* ------------------------------------------------------------------------ */
-  /* Approve salon - ADMIN                                                    */
+  /* Approve salon                                                             */
   /* ------------------------------------------------------------------------ */
 
   const approveSalon =
@@ -894,17 +1045,16 @@ const loadSalons =
             }
           }
 
-          const {
-            error,
-          } = await supabase
-            .from('salons')
-            .update({
-              status: 'approved',
-            })
-            .eq(
-              'id',
-              salonId,
-            )
+          const { error } =
+            await supabase
+              .from('salons')
+              .update({
+                status: 'approved',
+              })
+              .eq(
+                'id',
+                salonId,
+              )
 
           if (error) {
             console.error(
@@ -950,7 +1100,7 @@ const loadSalons =
     )
 
   /* ------------------------------------------------------------------------ */
-  /* Reject salon - ADMIN                                                     */
+  /* Reject salon                                                              */
   /* ------------------------------------------------------------------------ */
 
   const rejectSalon =
@@ -967,17 +1117,16 @@ const loadSalons =
             }
           }
 
-          const {
-            error,
-          } = await supabase
-            .from('salons')
-            .update({
-              status: 'rejected',
-            })
-            .eq(
-              'id',
-              salonId,
-            )
+          const { error } =
+            await supabase
+              .from('salons')
+              .update({
+                status: 'rejected',
+              })
+              .eq(
+                'id',
+                salonId,
+              )
 
           if (error) {
             console.error(
@@ -1197,19 +1346,17 @@ const loadSalons =
           data,
           error,
         } =
-          await supabase.auth.signUp(
-            {
-              email: email.trim(),
-              password,
-              options: {
-                data: {
-                  name: name.trim(),
-                  phone: phone.trim(),
-                  type,
-                },
+          await supabase.auth.signUp({
+            email: email.trim(),
+            password,
+            options: {
+              data: {
+                name: name.trim(),
+                phone: phone.trim(),
+                type,
               },
             },
-          )
+          })
 
         if (error) {
           const message =
@@ -1305,171 +1452,163 @@ const loadSalons =
   /* Create booking                                                           */
   /* ------------------------------------------------------------------------ */
 
-  const createBooking = useCallback(
-    async (
-      input: NewBookingInput,
-    ) => {
-      try {
-        const {
-          data: { user: authUser },
-        } =
-          await supabase.auth.getUser()
+  const createBooking =
+    useCallback(
+      async (
+        input: NewBookingInput,
+      ) => {
+        try {
+          const {
+            data: {
+              user: authUser,
+            },
+          } =
+            await supabase.auth.getUser()
 
-        const subtotal =
-          input.services.reduce(
-            (sum, service) =>
-              sum +
-              Number(
-                service.price,
-              ),
-            0,
-          )
-
-        let discount = 0
-
-        if (input.promoCode) {
-          const promo =
-            PROMO_CODES[
-              input.promoCode
-            ]
-
-          if (promo) {
-            discount =
-              Math.round(
-                subtotal *
-                  (promo.percent /
-                    100),
-              )
-
-            discount = Math.min(
-              discount,
-              subtotal,
+          const subtotal =
+            input.services.reduce(
+              (
+                sum,
+                service,
+              ) =>
+                sum +
+                Number(
+                  service.price,
+                ),
+              0,
             )
+
+          let discount = 0
+
+          if (input.promoCode) {
+            const promo =
+              PROMO_CODES[
+                input.promoCode
+              ]
+
+            if (promo) {
+              discount =
+                Math.round(
+                  subtotal *
+                    (promo.percent /
+                      100),
+                )
+
+              discount =
+                Math.min(
+                  discount,
+                  subtotal,
+                )
+            }
           }
-        }
 
-        const totalPrice =
-          Math.max(
-            0,
-            subtotal - discount,
-          )
+          const totalPrice =
+            Math.max(
+              0,
+              subtotal - discount,
+            )
 
-        const bookingCode =
-          generateBookingCode()
+          const bookingCode =
+            generateBookingCode()
 
-        const bookingPayload = {
-          code: bookingCode,
+          const bookingPayload = {
+            code: bookingCode,
+            salon_id:
+              input.salonId,
+            salon_name:
+              input.salonName,
+            services:
+              input.services.map(
+                (service) => ({
+                  id: service.id,
+                  name: service.name,
+                  price: service.price,
+                  duration:
+                    service.duration,
+                }),
+              ),
+            barber_name:
+              input.barberName,
+            date: input.date,
+            time: input.time,
+            client_name:
+              input.clientName,
+            phone: input.phone,
+            email: input.email,
+            notes: input.notes,
+            total_price:
+              totalPrice,
+            discount,
+            promo_code:
+              input.promoCode ||
+              null,
+            user_id:
+              authUser?.id ?? null,
+            status: 'مؤكد',
+          }
 
-          salon_id:
-            input.salonId,
-
-          salon_name:
-            input.salonName,
-
-          services:
-            input.services.map(
-              (service) => ({
-                id: service.id,
-                name: service.name,
-                price: service.price,
-                duration:
-                  service.duration,
-              }),
-            ),
-
-          barber_name:
-            input.barberName,
-
-          date: input.date,
-
-          time: input.time,
-
-          client_name:
-            input.clientName,
-
-          phone: input.phone,
-
-          email: input.email,
-
-          notes: input.notes,
-
-          total_price:
-            totalPrice,
-
-          discount,
-
-          promo_code:
-            input.promoCode ||
-            null,
-
-          user_id:
-            authUser?.id ?? null,
-
-          status: 'مؤكد',
-        }
-
-        const {
-          data,
-          error,
-        } = await supabase
-          .from('bookings')
-          .insert(
-            bookingPayload,
-          )
-          .select()
-          .single()
-
-        if (error) {
-          console.error(
-            'Create booking error:',
+          const {
+            data,
             error,
+          } = await supabase
+            .from('bookings')
+            .insert(
+              bookingPayload,
+            )
+            .select()
+            .single()
+
+          if (error) {
+            console.error(
+              'Create booking error:',
+              error,
+            )
+
+            return {
+              ok: false as const,
+              error:
+                error.message,
+              message:
+                error.message,
+            }
+          }
+
+          const booking =
+            mapBooking(data)
+
+          setAllBookings(
+            (current) => [
+              booking,
+              ...current,
+            ],
           )
 
           return {
-            ok: false as const,
-            error:
-              error.message,
+            ok: true as const,
+            booking,
             message:
-              error.message,
+              'تم إنشاء الحجز بنجاح',
+          }
+        } catch (error) {
+          console.error(
+            'Unexpected create booking error:',
+            error,
+          )
+
+          const message =
+            error instanceof Error
+              ? error.message
+              : 'حدث خطأ أثناء إنشاء الحجز'
+
+          return {
+            ok: false as const,
+            error: message,
+            message,
           }
         }
-
-        const booking =
-          mapBooking(data)
-
-        setAllBookings(
-          (current) => [
-            booking,
-            ...current,
-          ],
-        )
-
-        return {
-          ok: true as const,
-          booking,
-          message:
-            'تم إنشاء الحجز بنجاح',
-        }
-      } catch (error) {
-        console.error(
-          'Unexpected create booking error:',
-          error,
-        )
-
-        const message =
-          error instanceof Error
-            ? error.message
-            : 'حدث خطأ أثناء إنشاء الحجز'
-
-        return {
-          ok: false as const,
-          error: message,
-          message,
-        }
-      }
-    },
-    [],
-  )
+      },
+      [],
+    )
 
   /* ------------------------------------------------------------------------ */
   /* Cancel booking                                                           */
@@ -1646,11 +1785,6 @@ const loadSalons =
       [],
     )
 
-  /*
-   * Existing CRM page uses this name.
-   * Keep it as an alias so we don't need
-   * to modify CrmPage.tsx.
-   */
   const updateSalonBookingStatus =
     updateBookingStatus
 
@@ -1660,7 +1794,9 @@ const loadSalons =
 
   const setOwnerSalon =
     useCallback(
-      async (salonId: string) => {
+      async (
+        salonId: string,
+      ) => {
         if (!user) return
 
         const { error } =
@@ -1817,10 +1953,6 @@ const loadSalons =
       )
     }, [allBookings, user])
 
-  /*
-   * Keep the old names used by the
-   * existing pages.
-   */
   const bookings = myBookings
 
   const salonBookings =
@@ -1835,20 +1967,19 @@ const loadSalons =
       () => ({
         user,
         isReady,
-
         isAdmin,
+
         pendingSalons,
         loadPendingSalons,
+
         approveSalon,
         rejectSalon,
 
         salons,
 
         allBookings,
-
         bookings,
         myBookings,
-
         salonBookings,
         ownerSalonBookings,
 
@@ -1873,27 +2004,25 @@ const loadSalons =
         isFavorite,
 
         showToast,
-
         removeToast,
         dismissToast,
       }),
       [
         user,
         isReady,
-
         isAdmin,
+
         pendingSalons,
         loadPendingSalons,
+
         approveSalon,
         rejectSalon,
 
         salons,
 
         allBookings,
-
         bookings,
         myBookings,
-
         salonBookings,
         ownerSalonBookings,
 
@@ -1918,16 +2047,13 @@ const loadSalons =
         isFavorite,
 
         showToast,
-
         removeToast,
         dismissToast,
       ],
     )
 
   return (
-    <StoreContext.Provider
-      value={value}
-    >
+    <StoreContext.Provider value={value}>
       {children}
     </StoreContext.Provider>
   )

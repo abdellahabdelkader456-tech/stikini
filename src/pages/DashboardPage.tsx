@@ -1,6 +1,9 @@
-import { useState } from 'react'
+import { FormEvent, useEffect, useState } from 'react'
+
 import { Link } from 'react-router-dom'
+
 import { motion } from 'framer-motion'
+
 import {
   Calendar,
   Clock,
@@ -21,25 +24,248 @@ import {
   BarChart3,
   MessageCircle,
   Tag,
+  Loader2,
 } from 'lucide-react'
+
 import { useStore } from '../lib/store'
+
 import { SALONS, STATS } from '../lib/data'
+
 import { formatDateAr, formatPrice, cn } from '../lib/utils'
+
 import { EmptyState, Stars } from '../components/SalonCard'
 
+import { supabase } from '../lib/supabase'
+
 export default function DashboardPage() {
-  const { user, bookings, allBookings, favorites, cancelBooking, showToast } = useStore()
+  const {
+    user,
+    bookings,
+    allBookings,
+    favorites,
+    cancelBooking,
+    showToast,
+  } = useStore()
+
   const isOwner = user?.type === 'owner'
+
   const [activeTab, setActiveTab] = useState<
     'overview' | 'bookings' | 'favorites' | 'settings'
   >(isOwner ? 'settings' : 'overview')
+
   const [showAllUpcoming, setShowAllUpcoming] = useState(false)
 
-  const activeBookings = bookings.filter((b) => b.status === 'مؤكد')
-  const completedBookings = bookings.filter((b) => b.status === 'مكتمل')
+  const [profileForm, setProfileForm] = useState({
+    name: '',
+    email: '',
+    phone: '',
+  })
+
+  const [profileSaving, setProfileSaving] = useState(false)
+
+  const [deleteModal, setDeleteModal] = useState(false)
+
+  const [deleteReason, setDeleteReason] = useState('')
+
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false)
+
+  const [hasPendingDeletionRequest, setHasPendingDeletionRequest] =
+    useState(false)
+
+  useEffect(() => {
+    if (!user) return
+
+    setProfileForm({
+      name: user.name ?? '',
+      email: user.email ?? '',
+      phone: user.phone ?? '',
+    })
+  }, [user])
+
+  const activeBookings = bookings.filter(
+    (booking) => booking.status === 'مؤكد',
+  )
+
+  const completedBookings = bookings.filter(
+    (booking) => booking.status === 'مكتمل',
+  )
+
   const totalSpent = bookings
-    .filter((b) => b.status !== 'ملغى')
-    .reduce((sum, b) => sum + b.totalPrice, 0)
+    .filter((booking) => booking.status !== 'ملغى')
+    .reduce((sum, booking) => sum + booking.totalPrice, 0)
+
+  useEffect(() => {
+    if (!user || !isOwner) return
+
+    const checkDeletionRequest = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('account_deletion_requests')
+          .select('id,status')
+          .eq('user_id', user.id)
+          .in('status', ['pending', 'postponed'])
+          .maybeSingle()
+
+        if (error) {
+          console.error('Deletion request check error:', error)
+          return
+        }
+
+        setHasPendingDeletionRequest(Boolean(data))
+      } catch (error) {
+        console.error('Deletion request check error:', error)
+      }
+    }
+
+    checkDeletionRequest()
+  }, [user, isOwner])
+
+  async function saveProfile(event: FormEvent) {
+    event.preventDefault()
+
+    if (!user || !isOwner) return
+
+    const name = profileForm.name.trim()
+    const email = profileForm.email.trim()
+    const phone = profileForm.phone.trim()
+
+    if (!name) {
+      showToast('يرجى إدخال الاسم الكامل', 'error')
+      return
+    }
+
+    if (!email) {
+      showToast('يرجى إدخال البريد الإلكتروني', 'error')
+      return
+    }
+
+    setProfileSaving(true)
+
+    try {
+      const emailChanged =
+        email.toLowerCase() !== user.email.toLowerCase()
+
+      if (emailChanged) {
+        const { error: authError } = await supabase.auth.updateUser({
+          email,
+        })
+
+        if (authError) {
+          throw authError
+        }
+      }
+
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({
+          name,
+          email,
+          phone: phone || null,
+        })
+        .eq('id', user.id)
+
+      if (profileError) {
+        throw profileError
+      }
+
+      setProfileForm({
+        name,
+        email,
+        phone,
+      })
+
+      if (emailChanged) {
+        showToast(
+          'تم حفظ المعلومات. قد يطلب منك تأكيد البريد الإلكتروني الجديد.',
+          'success',
+        )
+      } else {
+        showToast('تم تحديث معلومات الحساب بنجاح.', 'success')
+      }
+    } catch (error) {
+      console.error('Profile update error:', error)
+
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'تعذر تحديث معلومات الحساب'
+
+      showToast(message, 'error')
+    } finally {
+      setProfileSaving(false)
+    }
+  }
+
+  async function submitDeletionRequest(event: FormEvent) {
+    event.preventDefault()
+
+    if (!user || !isOwner) return
+
+    const reason = deleteReason.trim()
+
+    if (!reason) {
+      showToast('يرجى كتابة سبب طلب حذف الحساب', 'error')
+      return
+    }
+
+    setDeleteSubmitting(true)
+
+    try {
+      const { data: existingRequest, error: existingError } =
+        await supabase
+          .from('account_deletion_requests')
+          .select('id,status')
+          .eq('user_id', user.id)
+          .in('status', ['pending', 'postponed'])
+          .maybeSingle()
+
+      if (existingError) {
+        throw existingError
+      }
+
+      if (existingRequest) {
+        setHasPendingDeletionRequest(true)
+        setDeleteModal(false)
+
+        showToast(
+          'لديك بالفعل طلب حذف قيد المراجعة.',
+          'error',
+        )
+
+        return
+      }
+
+      const { error } = await supabase
+        .from('account_deletion_requests')
+        .insert({
+          user_id: user.id,
+          reason,
+          status: 'pending',
+        })
+
+      if (error) {
+        throw error
+      }
+
+      setDeleteReason('')
+      setDeleteModal(false)
+      setHasPendingDeletionRequest(true)
+
+      showToast(
+        'تم إرسال طلب حذف الحساب إلى الإدارة للمراجعة.',
+        'success',
+      )
+    } catch (error) {
+      console.error('Deletion request error:', error)
+
+      showToast(
+        'تعذر إرسال طلب حذف الحساب.',
+        'error',
+      )
+    } finally {
+      setDeleteSubmitting(false)
+    }
+  }
 
   return (
     <>
@@ -51,9 +277,12 @@ export default function DashboardPage() {
             alt=""
             className="w-full h-full object-cover opacity-[0.15]"
           />
+
           <div className="absolute inset-0 bg-gradient-to-b from-forest/95 via-forest/88 to-forest" />
         </div>
+
         <div className="absolute top-0 right-1/3 w-[520px] h-[520px] rounded-full bg-gold/9 blur-[130px]" />
+
         <div className="hero-grid-bg absolute inset-0 opacity-55" />
 
         <div className="relative max-w-7xl mx-auto px-5 sm:px-6">
@@ -61,22 +290,27 @@ export default function DashboardPage() {
             <div>
               <span className="inline-flex items-center gap-2.5 px-4 py-2 rounded-full bg-gold/11 border border-gold/22 text-gold text-[11.5px] font-bold">
                 <Store className="w-3.5 h-3.5" />
-                {user?.type === 'owner' ? 'حساب صاحب صالون' : 'حساب زبون'}
+
+                {isOwner ? 'حساب صاحب صالون' : 'حساب زبون'}
               </span>
 
               <h1 className="mt-5 text-[clamp(2.15rem,4.8vw,3.25rem)] font-black text-cream leading-[1.26]">
-                مرحباً، <span className="text-gradient-gold">{user?.name}</span> 👋
+                مرحباً،{' '}
+                <span className="text-gradient-gold">
+                  {user?.name}
+                </span>{' '}
+                👋
               </h1>
 
               <p className="mt-4 text-cream/52 text-[15.5px] leading-[1.95]">
-                {user?.type === 'owner'
+                {isOwner
                   ? 'أدر حجوزاتك وفريق عملك وتقييماتك من مكان واحد.'
                   : 'تابع حجوزاتك، اكتشف صالونات جديدة، واحجز موعدك القادم بسهولة.'}
               </p>
             </div>
 
             <div className="flex flex-wrap gap-3">
-              {user?.type !== 'owner' && (
+              {!isOwner && (
                 <Link
                   to="/salons"
                   className="btn-gold inline-flex items-center gap-2.5 px-6 py-3.5 rounded-2xl text-[13.5px]"
@@ -85,6 +319,7 @@ export default function DashboardPage() {
                   احجز موعد جديد
                 </Link>
               )}
+
               {!isOwner && (
                 <button
                   onClick={() => setActiveTab('settings')}
@@ -97,7 +332,6 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Quick stats */}
           {!isOwner && (
             <div className="mt-11 grid grid-cols-2 lg:grid-cols-4 gap-4">
               {[
@@ -129,21 +363,34 @@ export default function DashboardPage() {
                   color: '#34d9a4',
                   bg: 'rgba(52,217,164,0.12)',
                 },
-              ].map((stat, i) => (
+              ].map((stat, index) => (
                 <motion.div
                   key={stat.label}
                   initial={{ opacity: 0, y: 22 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.58, delay: i * 0.09 }}
+                  transition={{
+                    duration: 0.58,
+                    delay: index * 0.09,
+                  }}
                   className="glass-panel rounded-[22px] p-6"
                 >
                   <div
                     className="w-12 h-12 rounded-2xl flex items-center justify-center"
-                    style={{ background: stat.bg, border: `1px solid ${stat.color}33` }}
+                    style={{
+                      background: stat.bg,
+                      border: `1px solid ${stat.color}33`,
+                    }}
                   >
-                    <stat.icon className="w-5 h-5" style={{ color: stat.color }} />
+                    <stat.icon
+                      className="w-5 h-5"
+                      style={{ color: stat.color }}
+                    />
                   </div>
-                  <p className="mt-5 text-cream/42 text-[11px] font-semibold">{stat.label}</p>
+
+                  <p className="mt-5 text-cream/42 text-[11px] font-semibold">
+                    {stat.label}
+                  </p>
+
                   <p className="mt-2 text-[26px] font-black text-cream leading-none">
                     {stat.value}
                   </p>
@@ -160,12 +407,29 @@ export default function DashboardPage() {
           {!isOwner && (
             <div className="flex flex-wrap gap-2.5 p-2 rounded-[22px] bg-white/3 border border-white/7 w-fit mb-9">
               {[
-                { key: 'overview' as const, label: 'نظرة عامة', icon: BarChart3 },
-                { key: 'bookings' as const, label: 'حجوزاتي', icon: Calendar },
-                { key: 'favorites' as const, label: 'المفضلة', icon: Heart },
-                { key: 'settings' as const, label: 'الإعدادات', icon: Settings },
+                {
+                  key: 'overview' as const,
+                  label: 'نظرة عامة',
+                  icon: BarChart3,
+                },
+                {
+                  key: 'bookings' as const,
+                  label: 'حجوزاتي',
+                  icon: Calendar,
+                },
+                {
+                  key: 'favorites' as const,
+                  label: 'المفضلة',
+                  icon: Heart,
+                },
+                {
+                  key: 'settings' as const,
+                  label: 'الإعدادات',
+                  icon: Settings,
+                },
               ].map((tab) => {
                 const Icon = tab.icon
+
                 return (
                   <button
                     key={tab.key}
@@ -185,28 +449,36 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Overview tab */}
+          {/* Overview */}
           {activeTab === 'overview' && (
             <div className="grid lg:grid-cols-3 gap-8">
-              {/* Upcoming bookings */}
               <div className="lg:col-span-2">
                 <div className="flex items-center justify-between gap-4 mb-6">
                   <div>
-                    <h2 className="text-[21px] font-black text-cream">الحجوزات القادمة</h2>
+                    <h2 className="text-[21px] font-black text-cream">
+                      الحجوزات القادمة
+                    </h2>
+
                     <p className="mt-1.5 text-cream/35 text-[10.5px]">
                       أحدث حجوزات المنصة المؤكدة — بدون بيانات الاتصال الخاصة بالزبائن الآخرين.
                     </p>
                   </div>
                 </div>
 
-                 {allBookings.length > 0 ? (
+                {allBookings.length > 0 ? (
                   <div className="space-y-4">
-                   {(showAllUpcoming ? allBookings : allBookings.slice(0, 3)).map((booking, i) => (
+                    {(showAllUpcoming
+                      ? allBookings
+                      : allBookings.slice(0, 3)
+                    ).map((booking, index) => (
                       <motion.div
                         key={booking.id}
                         initial={{ opacity: 0, y: 18 }}
                         animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.52, delay: i * 0.09 }}
+                        transition={{
+                          duration: 0.52,
+                          delay: index * 0.09,
+                        }}
                         className="glass-panel rounded-[22px] p-6"
                       >
                         <div className="flex flex-wrap items-start justify-between gap-5">
@@ -214,31 +486,36 @@ export default function DashboardPage() {
                             <div className="w-13 h-13 rounded-2xl bg-gold/12 border border-gold/22 flex items-center justify-center shrink-0">
                               <Scissors className="w-5 h-5 text-gold" />
                             </div>
+
                             <div>
                               <h3 className="text-cream text-[15.5px] font-bold">
                                 {booking.salonName}
                               </h3>
+
                               <div className="mt-2.5 flex flex-wrap items-center gap-x-5 gap-y-2">
                                 <span className="flex items-center gap-1.5 text-cream/48 text-[11px]">
                                   <Calendar className="w-3 h-3 text-gold/62" />
                                   {formatDateAr(booking.date)}
                                 </span>
+
                                 <span className="flex items-center gap-1.5 text-cream/48 text-[11px]">
                                   <Clock className="w-3 h-3 text-gold/62" />
                                   {booking.time}
                                 </span>
+
                                 <span className="flex items-center gap-1.5 text-cream/48 text-[11px]">
                                   <Users className="w-3 h-3 text-gold/62" />
                                   {booking.barberName}
                                 </span>
                               </div>
+
                               <div className="mt-3 flex flex-wrap gap-2">
-                                {booking.services.map((s) => (
+                                {booking.services.map((service) => (
                                   <span
-                                    key={s.id}
+                                    key={service.id}
                                     className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/8 text-cream/52 text-[9.5px] font-semibold"
                                   >
-                                    {s.name}
+                                    {service.name}
                                   </span>
                                 ))}
                               </div>
@@ -248,14 +525,20 @@ export default function DashboardPage() {
                           <div className="text-left shrink-0">
                             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-brand/12 border border-emerald-brand/24 w-fit">
                               <CheckCircle2 className="w-3 h-3 text-emerald-brand" />
+
                               <span className="text-emerald-brand text-[10px] font-bold">
                                 {booking.status}
                               </span>
                             </div>
+
                             <p className="mt-3 text-gold font-black text-[18px]">
                               {formatPrice(booking.totalPrice)} دج
                             </p>
-                            <p className="mt-1 text-cream/32 text-[9px]" dir="ltr">
+
+                            <p
+                              className="mt-1 text-cream/32 text-[9px]"
+                              dir="ltr"
+                            >
                               {booking.code}
                             </p>
                           </div>
@@ -263,18 +546,21 @@ export default function DashboardPage() {
                       </motion.div>
                     ))}
 
-                  {allBookings.length > 0 && (
                     <div className="mt-5 flex justify-center">
                       <button
                         type="button"
-                        onClick={() => setShowAllUpcoming((value) => !value)}
+                        onClick={() =>
+                          setShowAllUpcoming((value) => !value)
+                        }
                         className="inline-flex items-center gap-2.5 px-7 py-3.5 rounded-2xl border border-gold/28 bg-gold/7 text-gold text-[12px] font-bold hover:bg-gold/12 hover:border-gold/42 transition-all"
                       >
-                        {showAllUpcoming ? 'إظهار آخر 3 حجوزات' : 'عرض كل الحجوزات القادمة'}
+                        {showAllUpcoming
+                          ? 'إظهار آخر 3 حجوزات'
+                          : 'عرض كل الحجوزات القادمة'}
+
                         <ArrowLeft className="w-3.5 h-3.5" />
                       </button>
                     </div>
-                  )}
                   </div>
                 ) : (
                   <EmptyState
@@ -287,9 +573,7 @@ export default function DashboardPage() {
                 )}
               </div>
 
-              {/* Sidebar */}
               <div className="space-y-6">
-                {/* Profile card */}
                 <div className="glass-panel rounded-[22px] overflow-hidden">
                   <div className="relative h-[112px]">
                     <img
@@ -297,27 +581,44 @@ export default function DashboardPage() {
                       alt=""
                       className="w-full h-full object-cover opacity-62"
                     />
+
                     <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/32 to-transparent" />
                   </div>
+
                   <div className="px-6 pb-6 -mt-10">
                     <div className="w-[72px] h-[72px] rounded-[22px] bg-gradient-to-br from-gold-light to-gold-dark border-[3px] border-forest flex items-center justify-center">
                       <span className="text-ink text-[24px] font-black">
-                        {user?.name.charAt(0)}
+                        {user?.name?.charAt(0)}
                       </span>
                     </div>
-                    <h3 className="mt-4 text-cream text-[16px] font-black">{user?.name}</h3>
-                    <p className="mt-1 text-cream/42 text-[11px]" dir="ltr">
+
+                    <h3 className="mt-4 text-cream text-[16px] font-black">
+                      {user?.name}
+                    </h3>
+
+                    <p
+                      className="mt-1 text-cream/42 text-[11px]"
+                      dir="ltr"
+                    >
                       {user?.email}
                     </p>
-                    <p className="mt-1 text-cream/42 text-[11px]" dir="ltr">
+
+                    <p
+                      className="mt-1 text-cream/42 text-[11px]"
+                      dir="ltr"
+                    >
                       {user?.phone}
                     </p>
 
                     <div className="mt-5 pt-5 border-t border-white/8">
                       <div className="flex items-center gap-2">
                         <span className="px-3 py-1.5 rounded-full bg-gold/12 border border-gold/22 text-gold text-[9.5px] font-bold">
-                          عضو منذ {new Date(user?.createdAt ?? Date.now()).getFullYear()}
+                          عضو منذ{' '}
+                          {new Date(
+                            user?.createdAt ?? Date.now(),
+                          ).getFullYear()}
                         </span>
+
                         <span className="px-3 py-1.5 rounded-full bg-emerald-brand/12 border border-emerald-brand/22 text-emerald-brand text-[9.5px] font-bold">
                           حساب موثّق
                         </span>
@@ -326,13 +627,15 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                {/* Notifications */}
                 <div className="glass-panel rounded-[22px] p-6">
                   <div className="flex items-center gap-3 mb-5">
                     <span className="w-10 h-10 rounded-2xl bg-gold/12 border border-gold/22 flex items-center justify-center">
                       <Bell className="w-4.5 h-4.5 text-gold" />
                     </span>
-                    <h3 className="text-cream text-[14px] font-bold">آخر التحديثات</h3>
+
+                    <h3 className="text-cream text-[14px] font-bold">
+                      آخر التحديثات
+                    </h3>
                   </div>
 
                   <div className="space-y-4">
@@ -358,38 +661,59 @@ export default function DashboardPage() {
                         time: 'منذ يوم',
                         color: '#f5d77f',
                       },
-                    ].map((notif) => (
-                      <div key={notif.title} className="flex items-start gap-3.5">
+                    ].map((notification) => (
+                      <div
+                        key={notification.title}
+                        className="flex items-start gap-3.5"
+                      >
                         <span
                           className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
                           style={{
-                            background: `${notif.color}18`,
-                            border: `1px solid ${notif.color}2e`,
+                            background: `${notification.color}18`,
+                            border: `1px solid ${notification.color}2e`,
                           }}
                         >
-                          <notif.icon className="w-3.5 h-3.5" style={{ color: notif.color }} />
+                          <notification.icon
+                            className="w-3.5 h-3.5"
+                            style={{
+                              color: notification.color,
+                            }}
+                          />
                         </span>
+
                         <div>
-                          <p className="text-cream text-[11.5px] font-bold">{notif.title}</p>
-                          <p className="mt-1 text-cream/42 text-[10px] leading-relaxed">
-                            {notif.desc}
+                          <p className="text-cream text-[11.5px] font-bold">
+                            {notification.title}
                           </p>
-                          <p className="mt-1.5 text-cream/28 text-[9px]">{notif.time}</p>
+
+                          <p className="mt-1 text-cream/42 text-[10px] leading-relaxed">
+                            {notification.desc}
+                          </p>
+
+                          <p className="mt-1.5 text-cream/28 text-[9px]">
+                            {notification.time}
+                          </p>
                         </div>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                {/* Platform stats */}
                 <div className="glass-panel rounded-[22px] p-6">
                   <h3 className="text-cream text-[14px] font-bold mb-5">
                     إحصائيات المنصة
                   </h3>
+
                   <div className="space-y-4">
                     {STATS.map((stat) => (
-                      <div key={stat.label} className="flex items-center justify-between">
-                        <span className="text-cream/48 text-[11px]">{stat.label}</span>
+                      <div
+                        key={stat.label}
+                        className="flex items-center justify-between"
+                      >
+                        <span className="text-cream/48 text-[11px]">
+                          {stat.label}
+                        </span>
+
                         <span className="text-gold text-[12px] font-black">
                           {stat.value}
                         </span>
@@ -401,19 +725,24 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Bookings tab */}
+          {/* Bookings */}
           {activeTab === 'bookings' && (
             <div>
-              <h2 className="text-[21px] font-black text-cream mb-6">جميع حجوزاتي</h2>
+              <h2 className="text-[21px] font-black text-cream mb-6">
+                جميع حجوزاتي
+              </h2>
 
               {bookings.length > 0 ? (
                 <div className="space-y-4">
-                  {bookings.map((booking, i) => (
+                  {bookings.map((booking, index) => (
                     <motion.div
                       key={booking.id}
                       initial={{ opacity: 0, y: 18 }}
                       animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.52, delay: i * 0.07 }}
+                      transition={{
+                        duration: 0.52,
+                        delay: index * 0.07,
+                      }}
                       className="glass-panel rounded-[22px] p-6"
                     >
                       <div className="flex flex-wrap items-start justify-between gap-5">
@@ -421,11 +750,13 @@ export default function DashboardPage() {
                           <div className="w-13 h-13 rounded-2xl bg-gold/12 border border-gold/22 flex items-center justify-center shrink-0">
                             <Scissors className="w-5 h-5 text-gold" />
                           </div>
+
                           <div>
                             <div className="flex items-center gap-2.5 flex-wrap">
                               <h3 className="text-cream text-[15px] font-bold">
                                 {booking.salonName}
                               </h3>
+
                               <span
                                 className={cn(
                                   'px-2.5 py-1 rounded-full text-[9px] font-bold border',
@@ -439,31 +770,40 @@ export default function DashboardPage() {
                                 {booking.status}
                               </span>
                             </div>
+
                             <div className="mt-2.5 flex flex-wrap items-center gap-x-5 gap-y-2">
                               <span className="flex items-center gap-1.5 text-cream/48 text-[11px]">
                                 <Calendar className="w-3 h-3 text-gold/62" />
                                 {formatDateAr(booking.date)}
                               </span>
+
                               <span className="flex items-center gap-1.5 text-cream/48 text-[11px]">
                                 <Clock className="w-3 h-3 text-gold/62" />
                                 {booking.time}
                               </span>
+
                               <span className="flex items-center gap-1.5 text-cream/48 text-[11px]">
                                 <Users className="w-3 h-3 text-gold/62" />
                                 {booking.barberName}
                               </span>
                             </div>
+
                             <div className="mt-3 flex flex-wrap gap-2">
-                              {booking.services.map((s) => (
+                              {booking.services.map((service) => (
                                 <span
-                                  key={s.id}
+                                  key={service.id}
                                   className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/8 text-cream/52 text-[9.5px] font-semibold"
                                 >
-                                  {s.name} — {formatPrice(s.price)} دج
+                                  {service.name} —{' '}
+                                  {formatPrice(service.price)} دج
                                 </span>
                               ))}
                             </div>
-                            <p className="mt-2.5 text-cream/32 text-[9px]" dir="ltr">
+
+                            <p
+                              className="mt-2.5 text-cream/32 text-[9px]"
+                              dir="ltr"
+                            >
                               كود الحجز: {booking.code}
                             </p>
                           </div>
@@ -474,16 +814,21 @@ export default function DashboardPage() {
                             <p className="text-gold font-black text-[19px]">
                               {formatPrice(booking.totalPrice)} دج
                             </p>
+
                             {booking.discount > 0 && (
                               <p className="mt-1 flex items-center justify-end gap-1.5 text-emerald-brand text-[10px] font-bold">
                                 <Tag className="w-3 h-3" />
-                                {booking.promoCode} · -{formatPrice(booking.discount)} دج
+                                {booking.promoCode} · -
+                                {formatPrice(booking.discount)} دج
                               </p>
                             )}
                           </div>
+
                           {booking.status === 'مؤكد' && (
                             <button
-                              onClick={() => cancelBooking(booking.id)}
+                              onClick={() =>
+                                cancelBooking(booking.id)
+                              }
                               className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-red-400/24 text-red-300/88 text-[10.5px] font-bold hover:bg-red-500/12 transition-all"
                             >
                               <XCircle className="w-3 h-3" />
@@ -507,7 +852,7 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Favorites tab */}
+          {/* Favorites */}
           {activeTab === 'favorites' && (
             <div>
               <h2 className="text-[21px] font-black text-cream mb-6">
@@ -516,12 +861,17 @@ export default function DashboardPage() {
 
               {favorites.length > 0 ? (
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {SALONS.filter((s) => favorites.includes(s.id)).map((salon, i) => (
+                  {SALONS.filter((salon) =>
+                    favorites.includes(salon.id),
+                  ).map((salon, index) => (
                     <motion.div
                       key={salon.id}
                       initial={{ opacity: 0, y: 22 }}
                       animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.55, delay: i * 0.09 }}
+                      transition={{
+                        duration: 0.55,
+                        delay: index * 0.09,
+                      }}
                       className="group glass-panel rounded-[22px] overflow-hidden card-hover"
                     >
                       <div className="relative h-[168px] overflow-hidden">
@@ -530,25 +880,38 @@ export default function DashboardPage() {
                           alt={salon.name}
                           className="w-full h-full object-cover group-hover:scale-112 transition-transform duration-[850ms]"
                         />
+
                         <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/22 to-transparent" />
+
                         <div className="absolute bottom-3 right-4 left-4">
                           <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-black/48 backdrop-blur-md border border-white/12 w-fit">
                             <Star className="w-3 h-3 fill-gold text-gold" />
+
                             <span className="text-white text-[10.5px] font-black">
                               {salon.rating.toFixed(1)}
                             </span>
                           </div>
                         </div>
                       </div>
+
                       <div className="p-5">
-                        <h3 className="text-cream text-[14px] font-bold">{salon.name}</h3>
+                        <h3 className="text-cream text-[14px] font-bold">
+                          {salon.name}
+                        </h3>
+
                         <p className="mt-1.5 text-cream/42 text-[10px] flex items-center gap-1.5">
                           <MapPin className="w-2.5 h-2.5 text-gold/62" />
                           {salon.neighborhood}، الجزائر العاصمة
                         </p>
+
                         <div className="mt-3">
-                          <Stars rating={salon.rating} size="sm" showValue={false} />
+                          <Stars
+                            rating={salon.rating}
+                            size="sm"
+                            showValue={false}
+                          />
                         </div>
+
                         <Link
                           to={`/salon/${salon.slug}`}
                           className="mt-4 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-gold/12 border border-gold/24 text-gold text-[11px] font-bold hover:bg-gold hover:text-ink transition-all"
@@ -572,148 +935,348 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Settings tab */}
+          {/* Settings */}
           {activeTab === 'settings' && (
             <div className="max-w-2xl">
-              <h2 className="text-[21px] font-black text-cream mb-6">إعدادات الحساب</h2>
+              <h2 className="text-[21px] font-black text-cream mb-6">
+                إعدادات الحساب
+              </h2>
 
               {isOwner && (
-                <div className="glass-panel rounded-[22px] overflow-hidden mb-6">
-                  <div className="relative h-[112px]">
-                    <img
-                      src="/images/style-1.jpg"
-                      alt=""
-                      className="w-full h-full object-cover opacity-62"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/32 to-transparent" />
-                  </div>
-                  <div className="px-6 pb-6 -mt-10">
-                    <div className="w-[72px] h-[72px] rounded-[22px] bg-gradient-to-br from-gold-light to-gold-dark border-[3px] border-forest flex items-center justify-center">
-                      <span className="text-ink text-[24px] font-black">
-                        {user?.name.charAt(0)}
-                      </span>
-                    </div>
-                    <h3 className="mt-4 text-cream text-[16px] font-black">{user?.name}</h3>
-                    <p className="mt-1 text-cream/42 text-[11px]" dir="ltr">
-                      {user?.email}
-                    </p>
-                    <p className="mt-1 text-cream/42 text-[11px]" dir="ltr">
-                      {user?.phone}
-                    </p>
+                <>
+                  {/* Owner profile card */}
+                  <div className="glass-panel rounded-[22px] overflow-hidden mb-6">
+                    <div className="relative h-[112px]">
+                      <img
+                        src="/images/style-1.jpg"
+                        alt=""
+                        className="w-full h-full object-cover opacity-62"
+                      />
 
-                    <div className="mt-5 pt-5 border-t border-white/8">
-                      <div className="flex items-center gap-2">
-                        <span className="px-3 py-1.5 rounded-full bg-gold/12 border border-gold/22 text-gold text-[9.5px] font-bold">
-                          عضو منذ {new Date(user?.createdAt ?? Date.now()).getFullYear()}
-                        </span>
-                        <span className="px-3 py-1.5 rounded-full bg-emerald-brand/12 border border-emerald-brand/22 text-emerald-brand text-[9.5px] font-bold">
-                          حساب موثّق
+                      <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/32 to-transparent" />
+                    </div>
+
+                    <div className="px-6 pb-6 -mt-10">
+                      <div className="w-[72px] h-[72px] rounded-[22px] bg-gradient-to-br from-gold-light to-gold-dark border-[3px] border-forest flex items-center justify-center">
+                        <span className="text-ink text-[24px] font-black">
+                          {profileForm.name?.charAt(0) || '?'}
                         </span>
                       </div>
+
+                      <h3 className="mt-4 text-cream text-[16px] font-black">
+                        {profileForm.name}
+                      </h3>
+
+                      <p
+                        className="mt-1 text-cream/42 text-[11px]"
+                        dir="ltr"
+                      >
+                        {profileForm.email}
+                      </p>
+
+                      <p
+                        className="mt-1 text-cream/42 text-[11px]"
+                        dir="ltr"
+                      >
+                        {profileForm.phone || 'لا يوجد رقم هاتف'}
+                      </p>
+
+                      <div className="mt-5 pt-5 border-t border-white/8">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="px-3 py-1.5 rounded-full bg-gold/12 border border-gold/22 text-gold text-[9.5px] font-bold">
+                            عضو منذ{' '}
+                            {new Date(
+                              user?.createdAt ?? Date.now(),
+                            ).getFullYear()}
+                          </span>
+
+                          <span className="px-3 py-1.5 rounded-full bg-emerald-brand/12 border border-emerald-brand/22 text-emerald-brand text-[9.5px] font-bold">
+                            حساب موثّق
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Personal information */}
+                  <form
+                    onSubmit={saveProfile}
+                    className="glass-panel rounded-[22px] overflow-hidden"
+                  >
+                    <div className="px-7 py-6 border-b border-white/7">
+                      <h3 className="text-cream text-[15px] font-bold">
+                        المعلومات الشخصية
+                      </h3>
+
+                      <p className="mt-1.5 text-cream/42 text-[11px]">
+                        قم بتحديث معلومات حسابك الشخصية.
+                      </p>
+                    </div>
+
+                    <div className="px-7 py-7 space-y-5">
+                      <div>
+                        <label className="block text-cream/58 text-[11px] font-semibold mb-2.5">
+                          الاسم الكامل
+                        </label>
+
+                        <input
+                          type="text"
+                          value={profileForm.name}
+                          onChange={(event) =>
+                            setProfileForm((current) => ({
+                              ...current,
+                              name: event.target.value,
+                            }))
+                          }
+                          className="field"
+                          autoComplete="name"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-cream/58 text-[11px] font-semibold mb-2.5">
+                          البريد الإلكتروني
+                        </label>
+
+                        <input
+                          type="email"
+                          value={profileForm.email}
+                          onChange={(event) =>
+                            setProfileForm((current) => ({
+                              ...current,
+                              email: event.target.value,
+                            }))
+                          }
+                          className="field"
+                          dir="ltr"
+                          autoComplete="email"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-cream/58 text-[11px] font-semibold mb-2.5">
+                          رقم الهاتف
+                        </label>
+
+                        <input
+                          type="tel"
+                          value={profileForm.phone}
+                          onChange={(event) =>
+                            setProfileForm((current) => ({
+                              ...current,
+                              phone: event.target.value,
+                            }))
+                          }
+                          className="field"
+                          dir="ltr"
+                          autoComplete="tel"
+                        />
+                      </div>
+
+                      <div className="pt-5 border-t border-white/7">
+                        <button
+                          type="submit"
+                          disabled={profileSaving}
+                          className="btn-gold inline-flex items-center gap-2.5 px-7 py-3.5 rounded-2xl text-[13px] disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          {profileSaving ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <CheckCircle2 className="w-4 h-4" />
+                          )}
+
+                          {profileSaving
+                            ? 'جاري الحفظ...'
+                            : 'حفظ التغييرات'}
+                        </button>
+                      </div>
+                    </div>
+                  </form>
+
+                  {/* Danger zone */}
+                  <div className="mt-6 glass-panel rounded-[22px] p-7 border border-red-400/16">
+                    <h3 className="text-red-300 text-[14px] font-bold">
+                      منطقة الخطر
+                    </h3>
+
+                    <p className="mt-2 text-cream/42 text-[11px] leading-relaxed">
+                      طلب حذف الحساب لا يؤدي إلى الحذف مباشرة.
+                      سيتم إرسال الطلب إلى الإدارة للمراجعة قبل اتخاذ
+                      أي إجراء.
+                    </p>
+
+                    {hasPendingDeletionRequest ? (
+                      <div className="mt-5 flex items-start gap-3 rounded-2xl bg-gold/8 border border-gold/18 p-4">
+                        <Clock className="w-4 h-4 text-gold shrink-0 mt-0.5" />
+
+                        <div>
+                          <p className="text-gold text-[11.5px] font-bold">
+                            طلب حذف قيد المراجعة
+                          </p>
+
+                          <p className="mt-1 text-cream/42 text-[10px] leading-relaxed">
+                            لديك بالفعل طلب حذف حساب قيد المراجعة
+                            من طرف الإدارة.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setDeleteModal(true)}
+                        className="mt-5 inline-flex items-center gap-2 px-6 py-3 rounded-2xl border border-red-400/26 text-red-300/88 text-[12px] font-bold hover:bg-red-500/11 transition-all"
+                      >
+                        <XCircle className="w-3.5 h-3.5" />
+                        طلب حذف الحساب
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {!isOwner && (
+                <div className="glass-panel rounded-[22px] overflow-hidden">
+                  <div className="px-7 py-6 border-b border-white/7">
+                    <h3 className="text-cream text-[15px] font-bold">
+                      المعلومات الشخصية
+                    </h3>
+
+                    <p className="mt-1.5 text-cream/42 text-[11px]">
+                      معلومات حسابك الحالية.
+                    </p>
+                  </div>
+
+                  <div className="px-7 py-7 space-y-5">
+                    <div>
+                      <label className="block text-cream/58 text-[11px] font-semibold mb-2.5">
+                        الاسم الكامل
+                      </label>
+
+                      <input
+                        type="text"
+                        value={user?.name ?? ''}
+                        className="field"
+                        readOnly
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-cream/58 text-[11px] font-semibold mb-2.5">
+                        البريد الإلكتروني
+                      </label>
+
+                      <input
+                        type="email"
+                        value={user?.email ?? ''}
+                        className="field"
+                        dir="ltr"
+                        readOnly
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-cream/58 text-[11px] font-semibold mb-2.5">
+                        رقم الهاتف
+                      </label>
+
+                      <input
+                        type="tel"
+                        value={user?.phone ?? ''}
+                        className="field"
+                        dir="ltr"
+                        readOnly
+                      />
                     </div>
                   </div>
                 </div>
               )}
-
-              <div className="glass-panel rounded-[22px] overflow-hidden">
-                <div className="px-7 py-6 border-b border-white/7">
-                  <h3 className="text-cream text-[15px] font-bold">المعلومات الشخصية</h3>
-                  <p className="mt-1.5 text-cream/42 text-[11px]">
-                    قم بتحديث معلومات حسابك الشخصية
-                  </p>
-                </div>
-
-                <div className="px-7 py-7 space-y-5">
-                  <div>
-                    <label className="block text-cream/58 text-[11px] font-semibold mb-2.5">
-                      الاسم الكامل
-                    </label>
-                    <input
-                      type="text"
-                      defaultValue={user?.name}
-                      className="field"
-                      readOnly
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-cream/58 text-[11px] font-semibold mb-2.5">
-                      البريد الإلكتروني
-                    </label>
-                    <input
-                      type="email"
-                      defaultValue={user?.email}
-                      className="field"
-                      dir="ltr"
-                      readOnly
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-cream/58 text-[11px] font-semibold mb-2.5">
-                      رقم الهاتف
-                    </label>
-                    <input
-                      type="tel"
-                      defaultValue={user?.phone}
-                      className="field"
-                      dir="ltr"
-                      readOnly
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-cream/58 text-[11px] font-semibold mb-2.5">
-                      نوع الحساب
-                    </label>
-                    <input
-                      type="text"
-                      defaultValue={
-                        user?.type === 'owner' ? 'صاحب صالون' : 'زبون'
-                      }
-                      className="field"
-                      readOnly
-                    />
-                  </div>
-
-                  <div className="pt-5 border-t border-white/7">
-                    <button
-                      onClick={() =>
-                        showToast('تم حفظ التغييرات بنجاح.', 'success')
-                      }
-                      className="btn-gold inline-flex items-center gap-2.5 px-7 py-3.5 rounded-2xl text-[13px]"
-                    >
-                      <CheckCircle2 className="w-4 h-4" />
-                      حفظ التغييرات
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Danger zone */}
-              <div className="mt-6 glass-panel rounded-[22px] p-7 border border-red-400/16">
-                <h3 className="text-red-300 text-[14px] font-bold">منطقة الخطر</h3>
-                <p className="mt-2 text-cream/42 text-[11px] leading-relaxed">
-                  حذف الحساب نهائي ولا يمكن التراجع عنه. سيتم حذف جميع بياناتك
-                  وحجوزاتك.
-                </p>
-                <button
-                  onClick={() =>
-                    showToast(
-                      'لطلب حذف الحساب، يرجى التواصل مع فريق الدعم.',
-                      'info',
-                    )
-                  }
-                  className="mt-5 inline-flex items-center gap-2 px-6 py-3 rounded-2xl border border-red-400/26 text-red-300/88 text-[12px] font-bold hover:bg-red-500/11 transition-all"
-                >
-                  <XCircle className="w-3.5 h-3.5" />
-                  طلب حذف الحساب
-                </button>
-              </div>
             </div>
           )}
         </div>
       </section>
+
+      {/* Delete account request modal */}
+      {deleteModal && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-5 bg-black/70 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setDeleteModal(false)
+            }
+          }}
+        >
+          <div
+            className="w-full max-w-lg glass-panel-strong rounded-[26px] border border-red-400/20 overflow-hidden"
+            dir="rtl"
+          >
+            <div className="px-7 py-6 border-b border-white/7 flex items-start justify-between gap-5">
+              <div>
+                <h3 className="text-red-300 text-[17px] font-black">
+                  طلب حذف الحساب
+                </h3>
+
+                <p className="mt-2 text-cream/42 text-[11px] leading-relaxed">
+                  سيتم إرسال طلبك إلى الإدارة للمراجعة. لن يتم حذف
+                  حسابك مباشرة.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setDeleteModal(false)}
+                className="w-9 h-9 rounded-xl bg-white/5 border border-white/8 flex items-center justify-center text-cream/55 hover:text-cream hover:border-white/15 transition-all"
+              >
+                <XCircle className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={submitDeletionRequest}
+              className="px-7 py-7"
+            >
+              <label className="block text-cream/58 text-[11px] font-semibold mb-2.5">
+                سبب طلب حذف الحساب
+              </label>
+
+              <textarea
+                value={deleteReason}
+                onChange={(event) =>
+                  setDeleteReason(event.target.value)
+                }
+                placeholder="اكتب سبب طلب حذف حسابك..."
+                rows={5}
+                className="field resize-none"
+                disabled={deleteSubmitting}
+              />
+
+              <div className="mt-6 flex flex-col sm:flex-row gap-3">
+                <button
+                  type="submit"
+                  disabled={deleteSubmitting}
+                  className="flex-1 inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl bg-red-500/12 border border-red-400/25 text-red-300 text-[12px] font-bold hover:bg-red-500/18 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {deleteSubmitting && (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  )}
+
+                  {deleteSubmitting
+                    ? 'جاري إرسال الطلب...'
+                    : 'إرسال طلب الحذف'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setDeleteModal(false)}
+                  disabled={deleteSubmitting}
+                  className="flex-1 px-6 py-3.5 rounded-2xl border border-white/10 text-cream/65 text-[12px] font-bold hover:border-gold/25 hover:text-gold transition-all disabled:opacity-60"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </>
   )
 }

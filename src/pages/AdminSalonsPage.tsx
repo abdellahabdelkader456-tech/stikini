@@ -1,960 +1,2222 @@
-import { useEffect, useState } from 'react'
-import { Navigate } from 'react-router-dom'
-import { motion } from 'framer-motion'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+
 import {
+  AlertCircle,
+  AlertTriangle,
+  CalendarDays,
   Check,
-  X,
-  RefreshCw,
+  Clock3,
+  Eye,
+  Image as ImageIcon,
+  Mail,
   MapPin,
   Phone,
-  Scissors,
-  Clock,
-  Eye,
-  Users,
-  Image as ImageIcon,
-  Instagram,
-  Facebook,
-  MessageCircle,
-  CalendarDays,
+  RefreshCw,
+  Search,
   Store,
-  ChevronLeft,
-  Sparkles,
+  User,
+  Users,
+  X,
 } from 'lucide-react'
-import { useStore } from '../lib/store'
-import type { Salon } from '../lib/types'
-import type { ReactNode } from 'react'
 
-const formatPrice = (price: number) => {
-  return new Intl.NumberFormat('ar-DZ').format(price)
+import { supabase } from '../lib/supabase'
+import type {
+  Barber,
+  SalonService,
+} from '../lib/types'
+
+type SalonStatus =
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+
+type DeletionStatus =
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+  | 'postponed'
+  | string
+
+interface DeletionRequest {
+  id: string
+  user_id: string
+  reason: string
+  status: DeletionStatus
+  admin_note: string | null
+  requested_at: string
+  reviewed_at: string | null
+  reviewed_by: string | null
+  profile?: {
+    id: string
+    name: string | null
+    email: string | null
+    phone: string | null
+    type: string | null
+  }
 }
 
-const fadeUp = {
-  hidden: {
-    opacity: 0,
-    y: 24,
-  },
-  visible: (i: number) => ({
-    opacity: 1,
-    y: 0,
-    transition: {
-      duration: 0.55,
-      delay: i * 0.07,
-      ease: [0.22, 1, 0.36, 1] as const,
-    },
-  }),
+interface SalonImage {
+  id: string
+  salon_id: string
+  image_url: string
+  is_cover?: boolean
+  type?: string | null
+  image_type?: string | null
+}
+
+interface RawSalon {
+  id: string
+  name?: string | null
+  phone?: string | null
+  address?: string | null
+  description?: string | null
+  wilaya?: string | null
+  commune?: string | null
+  category?: string | null
+  logo_url?: string | null
+  cover_url?: string | null
+  opening_hours?: unknown
+  status?: SalonStatus | null
+  created_at?: string | null
+}
+
+interface AdminSalon {
+  id: string
+  slug: string
+
+  name: string
+  tagline: string
+  description: string
+
+  type: string
+
+  neighborhood: string
+  address: string
+  phone: string
+
+  rating: number
+  reviewsCount: number
+  priceLevel: number
+
+  image: string
+  logo: string
+  gallery: string[]
+
+  services: SalonService[]
+  barbers: Barber[]
+
+  reviews: unknown[]
+  features: string[]
+
+  workingHours: string
+  isOpen: boolean
+  featured: boolean
+  verified: boolean
+  established: number
+
+  status: SalonStatus
+
+  wilaya: string
+  commune: string
+  category: string
+
+  logo_url: string | null
+  cover_url: string | null
+  created_at?: string
+
+  images: SalonImage[]
+}
+
+const formatDate = (
+  value: string | null | undefined,
+): string => {
+  if (!value) return 'غير محدد'
+
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return 'غير محدد'
+  }
+
+  return date.toLocaleDateString('ar-DZ', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  })
+}
+
+const formatDateTime = (
+  value: string | null | undefined,
+): string => {
+  if (!value) return 'غير محدد'
+
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return 'غير محدد'
+  }
+
+  return date.toLocaleString('ar-DZ', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+const getSalonStatusLabel = (
+  status: SalonStatus,
+): string => {
+  switch (status) {
+    case 'approved':
+      return 'مقبول'
+
+    case 'rejected':
+      return 'مرفوض'
+
+    default:
+      return 'قيد المراجعة'
+  }
+}
+
+const getDeletionStatusLabel = (
+  status: DeletionStatus,
+): string => {
+  switch (status) {
+    case 'approved':
+      return 'تمت الموافقة'
+
+    case 'rejected':
+      return 'مرفوض'
+
+    case 'postponed':
+      return 'مؤجل'
+
+    default:
+      return 'قيد المراجعة'
+  }
+}
+
+const getDeletionStatusClasses = (
+  status: DeletionStatus,
+): string => {
+  switch (status) {
+    case 'approved':
+      return 'border-emerald-500/20 bg-emerald-500/10 text-emerald-400'
+
+    case 'rejected':
+      return 'border-red-500/20 bg-red-500/10 text-red-400'
+
+    case 'postponed':
+      return 'border-amber-500/20 bg-amber-500/10 text-amber-400'
+
+    default:
+      return 'border-gold/20 bg-gold/10 text-gold'
+  }
+}
+
+const getSalonCoverImage = (
+  salon: AdminSalon,
+): string | null => {
+  if (salon.cover_url?.trim()) {
+    return salon.cover_url.trim()
+  }
+
+  const coverImage = salon.images.find(
+    (image) =>
+      image.is_cover === true ||
+      image.type === 'cover' ||
+      image.image_type === 'cover',
+  )
+
+  if (coverImage?.image_url) {
+    return coverImage.image_url
+  }
+
+  if (salon.images[0]?.image_url) {
+    return salon.images[0].image_url
+  }
+
+  if (salon.image.trim()) {
+    return salon.image.trim()
+  }
+
+  if (salon.logo_url?.trim()) {
+    return salon.logo_url.trim()
+  }
+
+  if (salon.logo.trim()) {
+    return salon.logo.trim()
+  }
+
+  if (salon.gallery.length > 0) {
+    return salon.gallery[0]
+  }
+
+  return null
+}
+
+const getSalonGallery = (
+  salon: AdminSalon,
+): string[] => {
+  const images = [
+    salon.cover_url,
+    salon.logo_url,
+    salon.image,
+    salon.logo,
+    ...salon.images.map(
+      (image) => image.image_url,
+    ),
+    ...salon.gallery,
+  ]
+
+  return Array.from(
+    new Set(
+      images.filter(
+        (url): url is string =>
+          typeof url === 'string' &&
+          url.trim().length > 0,
+      ),
+    ),
+  )
+}
+
+const mapSalon = (
+  row: RawSalon,
+  services: SalonService[],
+  barbers: Barber[],
+  images: SalonImage[],
+): AdminSalon => {
+  const salonId = String(row.id)
+
+  const cleanName = String(
+    row.name ?? 'salon',
+  )
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^\p{L}\p{N}-]+/gu, '')
+    .replace(/-+/g, '-')
+
+  const gallery = Array.from(
+    new Set(
+      [
+        row.cover_url,
+        row.logo_url,
+        ...images.map(
+          (image) => image.image_url,
+        ),
+      ].filter(
+        (url): url is string =>
+          typeof url === 'string' &&
+          url.trim().length > 0,
+      ),
+    ),
+  )
+
+  const coverImage =
+    row.cover_url ||
+    images.find(
+      (image) =>
+        image.is_cover === true ||
+        image.type === 'cover' ||
+        image.image_type === 'cover',
+    )?.image_url ||
+    images[0]?.image_url ||
+    row.logo_url ||
+    ''
+
+  let salonType = 'رجالية'
+
+  if (
+    row.category === 'رجالية' ||
+    row.category === 'نسائية' ||
+    row.category === 'مختلطة'
+  ) {
+    salonType = row.category
+  }
+
+  return {
+    id: salonId,
+
+    slug: `${cleanName || 'salon'}-${salonId.slice(0, 8)}`,
+
+    name: String(
+      row.name ?? 'صالون',
+    ),
+
+    tagline: String(
+      row.description ?? '',
+    ),
+
+    description: String(
+      row.description ?? '',
+    ),
+
+    type: salonType,
+
+    neighborhood: String(
+      row.commune ||
+        row.wilaya ||
+        'الجزائر العاصمة',
+    ),
+
+    address: String(
+      row.address ?? '',
+    ),
+
+    phone: String(
+      row.phone ?? '',
+    ),
+
+    rating: 5,
+
+    reviewsCount: 0,
+
+    priceLevel: 2,
+
+    image: String(
+      coverImage,
+    ),
+
+    logo: String(
+      row.logo_url ?? '',
+    ),
+
+    gallery,
+
+    services,
+
+    barbers,
+
+    reviews: [],
+
+    features: [],
+
+    workingHours:
+      'حسب المواعيد',
+
+    isOpen: true,
+
+    featured: false,
+
+    verified:
+      row.status === 'approved',
+
+    established:
+      new Date(
+        row.created_at ??
+          Date.now(),
+      ).getFullYear(),
+
+    status:
+      row.status ?? 'pending',
+
+    wilaya: String(
+      row.wilaya ?? '',
+    ),
+
+    commune: String(
+      row.commune ?? '',
+    ),
+
+    category: String(
+      row.category ?? '',
+    ),
+
+    logo_url:
+      row.logo_url ?? null,
+
+    cover_url:
+      row.cover_url ?? null,
+
+    created_at:
+      row.created_at ??
+      undefined,
+
+    images,
+  }
 }
 
 export default function AdminSalonsPage() {
-  const {
-    user,
-    isAdmin,
-    pendingSalons,
-    loadPendingSalons,
-    approveSalon,
-    rejectSalon,
-  } = useStore()
+  const [salons, setSalons] =
+    useState<AdminSalon[]>([])
 
-  const [loading, setLoading] = useState(true)
-  const [processingId, setProcessingId] = useState<string | null>(null)
-  const [selectedSalon, setSelectedSalon] = useState<Salon | null>(null)
+  const [
+    deletionRequests,
+    setDeletionRequests,
+  ] = useState<DeletionRequest[]>(
+    [],
+  )
 
-  /*
-   * --------------------------------------------------------------------------
-   * Load pending salons
-   * --------------------------------------------------------------------------
-   */
+  const [loading, setLoading] =
+    useState(true)
 
-  useEffect(() => {
-    if (!isAdmin) return
+  const [
+    loadingRequests,
+    setLoadingRequests,
+  ] = useState(true)
 
-    const load = async () => {
-      setLoading(true)
-      await loadPendingSalons()
+  const [
+    processingSalon,
+    setProcessingSalon,
+  ] = useState<string | null>(
+    null,
+  )
+
+  const [
+    processingRequest,
+    setProcessingRequest,
+  ] = useState<string | null>(
+    null,
+  )
+
+  const [searchTerm, setSearchTerm] =
+    useState('')
+
+  const [activeTab, setActiveTab] =
+    useState<
+      'salons' | 'deletions'
+    >('salons')
+
+  const [
+    selectedSalon,
+    setSelectedSalon,
+  ] = useState<AdminSalon | null>(
+    null,
+  )
+
+  const [
+    selectedDeletionRequest,
+    setSelectedDeletionRequest,
+  ] = useState<DeletionRequest | null>(
+    null,
+  )
+
+  const [adminNote, setAdminNote] =
+    useState('')
+
+  const loadSalons = async () => {
+    setLoading(true)
+
+    try {
+      const {
+        data,
+        error,
+      } = await supabase
+        .from('salons')
+        .select('*')
+        .order(
+          'created_at',
+          {
+            ascending: false,
+          },
+        )
+
+      if (error) {
+        console.error(
+          'Error loading salons:',
+          error,
+        )
+
+        setSalons([])
+        return
+      }
+
+      const rows =
+        (data ?? []) as RawSalon[]
+
+      const enrichedSalons: AdminSalon[] =
+        []
+
+      for (const salon of rows) {
+        const salonId =
+          String(salon.id)
+
+        const [
+          servicesResult,
+          barbersResult,
+          imagesResult,
+        ] = await Promise.all([
+          supabase
+            .from('salon_services')
+            .select('*')
+            .eq(
+              'salon_id',
+              salonId,
+            )
+            .order('name'),
+
+          supabase
+            .from('salon_barbers')
+            .select('*')
+            .eq(
+              'salon_id',
+              salonId,
+            )
+            .order('name'),
+
+          supabase
+            .from('salon_images')
+            .select('*')
+            .eq(
+              'salon_id',
+              salonId,
+            ),
+        ])
+
+        if (servicesResult.error) {
+          console.error(
+            `Services error for ${salon.name}:`,
+            servicesResult.error,
+          )
+        }
+
+        if (barbersResult.error) {
+          console.error(
+            `Barbers error for ${salon.name}:`,
+            barbersResult.error,
+          )
+        }
+
+        if (imagesResult.error) {
+          console.error(
+            `Images error for ${salon.name}:`,
+            imagesResult.error,
+          )
+        }
+
+        const services =
+          (
+            servicesResult.data ??
+            []
+          ).map(
+            (service: any) => ({
+              id: String(
+                service.id,
+              ),
+              name: String(
+                service.name ??
+                  '',
+              ),
+              category: String(
+                service.category ??
+                  'خدمات',
+              ),
+              price: Number(
+                service.price ??
+                  0,
+              ),
+              duration: Number(
+                service.duration ??
+                  0,
+              ),
+              description:
+                String(
+                  service.description ??
+                    '',
+                ),
+              popular:
+                service.popular ===
+                true,
+            }),
+          ) as SalonService[]
+
+        const barbers =
+          (
+            barbersResult.data ??
+            []
+          ).map(
+            (barber: any) => {
+              const specialties =
+                Array.isArray(
+                  barber.specialties,
+                )
+                  ? barber.specialties.map(
+                      String,
+                    )
+                  : []
+
+              return {
+                id: String(
+                  barber.id,
+                ),
+                name: String(
+                  barber.name ??
+                    '',
+                ),
+                role: String(
+                  barber.role ??
+                    'حلاق',
+                ),
+                experience: `${Number(
+                  barber.experience ??
+                    0,
+                )} سنوات`,
+                rating: Number(
+                  barber.rating ??
+                    5,
+                ),
+                image: String(
+                  barber.photo_url ??
+                    '',
+                ),
+                specialties,
+              }
+            },
+          ) as Barber[]
+
+        const images =
+          (
+            imagesResult.data ??
+            []
+          ).map(
+            (image: any) => ({
+              id: String(
+                image.id,
+              ),
+              salon_id: String(
+                image.salon_id ??
+                  salonId,
+              ),
+              image_url: String(
+                image.image_url ??
+                  '',
+              ),
+              is_cover:
+                image.is_cover ===
+                true,
+              type:
+                image.type ??
+                null,
+              image_type:
+                image.image_type ??
+                null,
+            }),
+          ) as SalonImage[]
+
+        enrichedSalons.push(
+          mapSalon(
+            salon,
+            services,
+            barbers,
+            images,
+          ),
+        )
+      }
+
+      setSalons(
+        enrichedSalons,
+      )
+    } catch (error) {
+      console.error(
+        'Unexpected salons error:',
+        error,
+      )
+
+      setSalons([])
+    } finally {
       setLoading(false)
     }
+  }
 
-    void load()
-  }, [isAdmin, loadPendingSalons])
+  const loadDeletionRequests = async () => {
+  setLoadingRequests(true)
 
-  /*
-   * --------------------------------------------------------------------------
-   * Escape key
-   * --------------------------------------------------------------------------
-   */
+  try {
+    const {
+      data: requests,
+      error: requestsError,
+    } = await supabase
+      .from('account_deletion_requests')
+      .select(`
+        id,
+        user_id,
+        reason,
+        status,
+        admin_note,
+        requested_at,
+        reviewed_at,
+        reviewed_by
+      `)
+      .order('requested_at', {
+        ascending: false,
+      })
+
+    if (requestsError) {
+      console.error(
+        'Error loading deletion requests:',
+        requestsError,
+      )
+      setDeletionRequests([])
+      return
+    }
+
+    const requestRows =
+      (requests ?? []) as DeletionRequest[]
+
+    if (requestRows.length === 0) {
+      setDeletionRequests([])
+      return
+    }
+
+    const userIds = Array.from(
+      new Set(
+        requestRows
+          .map((request) =>
+            String(request.user_id ?? '').trim(),
+          )
+          .filter(Boolean),
+      ),
+    )
+
+    if (userIds.length === 0) {
+      setDeletionRequests(requestRows)
+      return
+    }
+
+    const {
+      data: profiles,
+      error: profilesError,
+    } = await supabase
+      .from('profiles')
+      .select(
+        'id, name, email, phone, type',
+      )
+      .in('id', userIds)
+
+    if (profilesError) {
+      console.error(
+        'Error loading profiles for deletion requests:',
+        profilesError,
+      )
+
+      setDeletionRequests(requestRows)
+      return
+    }
+
+    const profileMap = new Map<
+      string,
+      DeletionRequest['profile']
+    >()
+
+    for (const profile of profiles ?? []) {
+      profileMap.set(
+        String(profile.id).trim(),
+        {
+          id: String(profile.id),
+          name: profile.name ?? null,
+          email: profile.email ?? null,
+          phone: profile.phone ?? null,
+          type: profile.type ?? null,
+        },
+      )
+    }
+
+    const enrichedRequests =
+      requestRows.map((request) => {
+        const userId = String(
+          request.user_id ?? '',
+        ).trim()
+
+        return {
+          ...request,
+          profile:
+            profileMap.get(userId),
+        }
+      })
+
+    console.log(
+      'Deletion requests with profiles:',
+      enrichedRequests,
+    )
+
+    setDeletionRequests(
+      enrichedRequests,
+    )
+  } catch (error) {
+    console.error(
+      'Unexpected deletion request error:',
+      error,
+    )
+
+    setDeletionRequests([])
+  } finally {
+    setLoadingRequests(false)
+  }
+}
+
+  const refreshAll = async () => {
+    await Promise.all([
+      loadSalons(),
+      loadDeletionRequests(),
+    ])
+  }
 
   useEffect(() => {
-    if (!selectedSalon) return
+    void refreshAll()
+  }, [])
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setSelectedSalon(null)
+  const filteredSalons =
+    useMemo(() => {
+      const search =
+        searchTerm
+          .trim()
+          .toLowerCase()
+
+      if (!search) {
+        return salons
+      }
+
+      return salons.filter(
+        (salon) =>
+          [
+            salon.name,
+            salon.address,
+            salon.wilaya,
+            salon.commune,
+            salon.phone,
+            salon.category,
+          ]
+            .filter(Boolean)
+            .some(
+              (value) =>
+                String(
+                  value,
+                )
+                  .toLowerCase()
+                  .includes(
+                    search,
+                  ),
+            ),
+      )
+    }, [
+      salons,
+      searchTerm,
+    ])
+
+  const pendingSalons =
+    salons.filter(
+      (salon) =>
+        salon.status ===
+        'pending',
+    )
+
+  const pendingDeletionRequests =
+    deletionRequests.filter(
+      (request) =>
+        request.status ===
+        'pending',
+    )
+
+  const handleSalonStatus =
+    async (
+      salonId: string,
+      status: SalonStatus,
+    ) => {
+      setProcessingSalon(
+        salonId,
+      )
+
+      try {
+        const { error } =
+          await supabase
+            .from('salons')
+            .update({
+              status,
+            })
+            .eq(
+              'id',
+              salonId,
+            )
+
+        if (error) {
+          console.error(
+            'Error updating salon:',
+            error,
+          )
+
+          window.alert(
+            'حدث خطأ أثناء تحديث حالة الصالون.',
+          )
+
+          return
+        }
+
+        setSalons(
+          (current) =>
+            current.map(
+              (salon) =>
+                salon.id ===
+                salonId
+                  ? {
+                      ...salon,
+                      status,
+                      verified:
+                        status ===
+                        'approved',
+                    }
+                  : salon,
+            ),
+        )
+
+        setSelectedSalon(
+          (current) =>
+            current &&
+            current.id ===
+              salonId
+              ? {
+                  ...current,
+                  status,
+                  verified:
+                    status ===
+                    'approved',
+                }
+              : current,
+        )
+      } catch (error) {
+        console.error(
+          'Unexpected salon status error:',
+          error,
+        )
+
+        window.alert(
+          'حدث خطأ غير متوقع.',
+        )
+      } finally {
+        setProcessingSalon(
+          null,
+        )
       }
     }
 
-    window.addEventListener('keydown', handleKeyDown)
+  const handleDeletionDecision =
+    async (
+      request: DeletionRequest,
+      status:
+        | 'approved'
+        | 'rejected',
+    ) => {
+      setProcessingRequest(
+        request.id,
+      )
 
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown)
+      try {
+        const {
+          data: {
+            user,
+          },
+          error:
+            userError,
+        } =
+          await supabase.auth.getUser()
+
+        if (
+          userError ||
+          !user
+        ) {
+          window.alert(
+            'يجب تسجيل الدخول بحساب المدير.',
+          )
+
+          return
+        }
+
+        const reviewedAt =
+          new Date().toISOString()
+
+        const { error } =
+          await supabase
+            .from(
+              'account_deletion_requests',
+            )
+            .update({
+              status,
+              admin_note:
+                adminNote.trim() ||
+                null,
+              reviewed_at:
+                reviewedAt,
+              reviewed_by:
+                user.id,
+            })
+            .eq(
+              'id',
+              request.id,
+            )
+
+        if (error) {
+          console.error(
+            'Error updating deletion request:',
+            error,
+          )
+
+          window.alert(
+            'حدث خطأ أثناء تحديث طلب حذف الحساب.',
+          )
+
+          return
+        }
+
+        const updatedRequest: DeletionRequest =
+          {
+            ...request,
+            status,
+            admin_note:
+              adminNote.trim() ||
+              null,
+            reviewed_at:
+              reviewedAt,
+            reviewed_by:
+              user.id,
+          }
+
+        setDeletionRequests(
+          (current) =>
+            current.map(
+              (item) =>
+                item.id ===
+                request.id
+                  ? updatedRequest
+                  : item,
+            ),
+        )
+
+        setSelectedDeletionRequest(
+          updatedRequest,
+        )
+
+        setAdminNote('')
+      } catch (error) {
+        console.error(
+          'Unexpected deletion decision error:',
+          error,
+        )
+
+        window.alert(
+          'حدث خطأ غير متوقع.',
+        )
+      } finally {
+        setProcessingRequest(
+          null,
+        )
+      }
     }
-  }, [selectedSalon])
 
-  /*
-   * --------------------------------------------------------------------------
-   * Keep selected salon updated
-   * --------------------------------------------------------------------------
-   */
+  return (
+ <main
+  dir="rtl"
+  className="min-h-screen bg-forest px-4 pb-6 pt-0 text-cream sm:px-6 sm:pb-8 lg:px-8"
+>
+      <div className="mx-auto max-w-7xl">
+        {/* Header */}
+        <div className="mb-8 flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-gold/20 bg-gold/10">
+                <Store className="h-5 w-5 text-gold" />
+              </div>
 
-  useEffect(() => {
-    if (!selectedSalon) return
+              <div>
+                <h1 className="text-2xl font-bold text-cream sm:text-3xl">
+                  إدارة المنصة
+                </h1>
 
-    const updatedSalon = pendingSalons.find(
-      (salon) => salon.id === selectedSalon.id,
-    )
+                <p className="mt-1 text-sm text-cream/55">
+                  إدارة الصالونات وطلبات حذف الحسابات
+                </p>
+              </div>
+            </div>
+          </div>
 
-    if (updatedSalon) {
-      setSelectedSalon(updatedSalon)
-    }
-  }, [pendingSalons, selectedSalon])
-
-  /*
-   * --------------------------------------------------------------------------
-   * Authentication
-   * --------------------------------------------------------------------------
-   */
-
-  if (!user) {
-    return <Navigate to="/login" replace />
-  }
-
-  if (!isAdmin) {
-    return <Navigate to="/" replace />
-  }
-
-  /*
-   * --------------------------------------------------------------------------
-   * Approve salon
-   * --------------------------------------------------------------------------
-   */
-
-  const handleApprove = async (salonId: string) => {
-    setProcessingId(salonId)
-
-    const result = await approveSalon(salonId)
-
-    setProcessingId(null)
-
-    if (!result.ok) {
-      alert(result.error || 'حدث خطأ أثناء الموافقة')
-      return
-    }
-
-    setSelectedSalon(null)
-  }
-
-  /*
-   * --------------------------------------------------------------------------
-   * Reject salon
-   * --------------------------------------------------------------------------
-   */
-
-  const handleReject = async (salonId: string) => {
-    const confirmed = window.confirm(
-      'هل أنت متأكد من رفض هذا الصالون؟',
-    )
-
-    if (!confirmed) return
-
-    setProcessingId(salonId)
-
-    const result = await rejectSalon(salonId)
-
-    setProcessingId(null)
-
-    if (!result.ok) {
-      alert(result.error || 'حدث خطأ أثناء الرفض')
-      return
-    }
-
-    setSelectedSalon(null)
-  }
-
-  /*
-   * --------------------------------------------------------------------------
-   * Gallery helper
-   * --------------------------------------------------------------------------
-   */
-
-  const getGalleryImages = (salon: Salon): string[] => {
-    const images = [
-      salon.image,
-      salon.logo,
-      ...(salon.gallery || []),
-    ]
-
-    return Array.from(
-      new Set(
-        images.filter(
-          (image): image is string =>
-            typeof image === 'string' &&
-            image.trim().length > 0,
-        ),
-      ),
-    )
-  }
-
-  /*
-   * --------------------------------------------------------------------------
-   * Loading
-   * --------------------------------------------------------------------------
-   */
-
-  if (loading) {
-    return (
-      <main
-        dir="rtl"
-        className="min-h-screen bg-forest px-5 py-10 text-cream"
-      >
-        <div className="absolute inset-0 pointer-events-none overflow-hidden">
-          <div className="absolute -top-40 -right-40 h-[520px] w-[520px] rounded-full bg-gold/7 blur-[140px]" />
-          <div className="absolute bottom-0 -left-40 h-[500px] w-[500px] rounded-full bg-emerald-brand/6 blur-[140px]" />
+          <button
+            type="button"
+            onClick={() =>
+              void refreshAll()
+            }
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-gold/20 bg-gold/5 px-4 py-2.5 text-sm font-semibold text-gold transition hover:border-gold/40 hover:bg-gold/10"
+          >
+            <RefreshCw className="h-4 w-4" />
+            تحديث البيانات
+          </button>
         </div>
 
-        <div className="relative mx-auto flex min-h-[70vh] max-w-7xl items-center justify-center">
-          <div className="text-center">
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-gold/20 bg-gold/8">
-              <RefreshCw
-                className="animate-spin text-gold"
-                size={28}
+        {/* Tabs */}
+        <div className="mb-6 flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-black/10 p-2">
+          <button
+            type="button"
+            onClick={() =>
+              setActiveTab(
+                'salons',
+              )
+            }
+            className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+              activeTab ===
+              'salons'
+                ? 'bg-gold text-forest'
+                : 'text-cream/65 hover:bg-white/5 hover:text-cream'
+            }`}
+          >
+            <Store className="h-4 w-4" />
+
+            الصالونات
+
+            <span className="rounded-full bg-gold/10 px-2 py-0.5 text-xs text-gold">
+              {pendingSalons.length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              setActiveTab(
+                'deletions',
+              )
+            }
+            className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+              activeTab ===
+              'deletions'
+                ? 'bg-gold text-forest'
+                : 'text-cream/65 hover:bg-white/5 hover:text-cream'
+            }`}
+          >
+            <AlertTriangle className="h-4 w-4" />
+
+            طلبات حذف الحساب
+
+            <span className="rounded-full bg-gold/10 px-2 py-0.5 text-xs text-gold">
+              {
+                pendingDeletionRequests.length
+              }
+            </span>
+          </button>
+        </div>
+
+        {activeTab ===
+          'salons' && (
+          <>
+            <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <StatCard
+                icon={
+                  <Store className="h-5 w-5" />
+                }
+                label="إجمالي الصالونات"
+                value={
+                  salons.length
+                }
+              />
+
+              <StatCard
+                icon={
+                  <Clock3 className="h-5 w-5" />
+                }
+                label="قيد المراجعة"
+                value={
+                  pendingSalons.length
+                }
+              />
+
+              <StatCard
+                icon={
+                  <Check className="h-5 w-5" />
+                }
+                label="المقبولة"
+                value={
+                  salons.filter(
+                    (salon) =>
+                      salon.status ===
+                      'approved',
+                  ).length
+                }
               />
             </div>
 
-            <p className="mt-5 text-lg font-semibold text-cream">
-              جاري تحميل طلبات الصالونات...
-            </p>
+            <div className="mb-6 rounded-2xl border border-white/10 bg-black/10 p-4">
+              <div className="relative">
+                <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-cream/35" />
 
-            <p className="mt-2 text-sm text-cream/40">
-              يرجى الانتظار قليلاً
-            </p>
-          </div>
-        </div>
-      </main>
-    )
-  }
+                <input
+                  type="text"
+                  value={
+                    searchTerm
+                  }
+                  onChange={(
+                    event,
+                  ) =>
+                    setSearchTerm(
+                      event.target
+                        .value,
+                    )
+                  }
+                  placeholder="ابحث عن صالون..."
+                  className="w-full rounded-xl border border-white/10 bg-black/20 py-3 pl-4 pr-10 text-sm text-cream outline-none transition placeholder:text-cream/30 focus:border-gold/40"
+                />
+              </div>
+            </div>
 
-  /*
-   * --------------------------------------------------------------------------
-   * Page
-   * --------------------------------------------------------------------------
-   */
+            {loading ? (
+              <LoadingState />
+            ) : filteredSalons.length ===
+              0 ? (
+              <EmptyState
+                icon={
+                  <Store className="h-8 w-8" />
+                }
+                title="لا توجد صالونات"
+                description="لم يتم العثور على أي صالونات مطابقة."
+              />
+            ) : (
+              <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 xl:grid-cols-3">
+                {filteredSalons.map(
+                  (salon) => {
+                    const image =
+                      getSalonCoverImage(
+                        salon,
+                      )
 
-  return (
-    <main
-      dir="rtl"
-      className="relative min-h-screen overflow-hidden bg-forest px-4 py-10 text-cream sm:px-6 lg:px-8"
-    >
-      {/* Background effects */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute -top-40 -right-40 h-[620px] w-[620px] rounded-full bg-gold/7 blur-[150px]" />
+                    return (
+                      <div
+                        key={
+                          salon.id
+                        }
+                        className="overflow-hidden rounded-2xl border border-white/10 bg-black/10 transition hover:border-gold/20"
+                      >
+                        <div className="relative h-48 overflow-hidden bg-black/20">
+                          {image ? (
+                            <img
+                              src={
+                                image
+                              }
+                              alt={
+                                salon.name
+                              }
+                              className="h-full w-full object-cover transition duration-500 hover:scale-105"
+                            />
+                          ) : (
+                            <div className="flex h-full items-center justify-center">
+                              <ImageIcon className="h-10 w-10 text-cream/20" />
+                            </div>
+                          )}
 
-        <div className="absolute top-1/2 -left-48 h-[520px] w-[520px] rounded-full bg-emerald-brand/5 blur-[140px]" />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
 
-        <div className="absolute inset-0 hero-grid-bg opacity-20" />
+                          <div className="absolute right-3 top-3">
+                            <span
+                              className={`rounded-full border px-3 py-1 text-xs font-semibold ${
+                                salon.status ===
+                                'approved'
+                                  ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-400'
+                                  : salon.status ===
+                                      'rejected'
+                                    ? 'border-red-500/20 bg-red-500/10 text-red-400'
+                                    : 'border-gold/20 bg-gold/10 text-gold'
+                              }`}
+                            >
+                              {getSalonStatusLabel(
+                                salon.status,
+                              )}
+                            </span>
+                          </div>
 
-        <div className="noise-overlay" />
+                          {salon.logo_url && (
+                            <div className="absolute bottom-3 right-3 h-14 w-14 overflow-hidden rounded-xl border-2 border-cream/20 bg-forest">
+                              <img
+                                src={
+                                  salon.logo_url
+                                }
+                                alt={
+                                  salon.name
+                                }
+                                className="h-full w-full object-cover"
+                              />
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="p-5">
+                          <h2 className="truncate text-lg font-bold text-cream">
+                            {salon.name}
+                          </h2>
+
+                          <div className="mt-2 flex items-center gap-2 text-sm text-cream/50">
+                            <MapPin className="h-4 w-4 shrink-0 text-gold" />
+
+                            <span className="truncate">
+                              {salon.address ||
+                                salon.commune ||
+                                salon.wilaya ||
+                                'العنوان غير محدد'}
+                            </span>
+                          </div>
+
+                          <div className="my-5 grid grid-cols-3 gap-2">
+                            <InfoBox
+                              label="الخدمات"
+                              value={String(
+                                salon
+                                  .services
+                                  .length,
+                              )}
+                            />
+
+                            <InfoBox
+                              label="الحلاقين"
+                              value={String(
+                                salon
+                                  .barbers
+                                  .length,
+                              )}
+                            />
+
+                            <InfoBox
+                              label="الصور"
+                              value={String(
+                                getSalonGallery(
+                                  salon,
+                                ).length,
+                              )}
+                            />
+                          </div>
+
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSelectedSalon(
+                                  salon,
+                                )
+                              }
+                              className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm font-semibold text-cream transition hover:bg-white/10"
+                            >
+                              <Eye className="h-4 w-4" />
+                              التفاصيل
+                            </button>
+
+                            {salon.status ===
+                              'pending' && (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={
+                                    processingSalon ===
+                                    salon.id
+                                  }
+                                  onClick={() =>
+                                    void handleSalonStatus(
+                                      salon.id,
+                                      'approved',
+                                    )
+                                  }
+                                  className="rounded-xl bg-gold px-3 py-2.5 text-forest transition hover:bg-gold/90 disabled:opacity-50"
+                                >
+                                  <Check className="h-4 w-4" />
+                                </button>
+
+                                <button
+                                  type="button"
+                                  disabled={
+                                    processingSalon ===
+                                    salon.id
+                                  }
+                                  onClick={() =>
+                                    void handleSalonStatus(
+                                      salon.id,
+                                      'rejected',
+                                    )
+                                  }
+                                  className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2.5 text-red-400 transition hover:bg-red-500/15 disabled:opacity-50"
+                                >
+                                  <X className="h-4 w-4" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  },
+                )}
+              </div>
+            )}
+          </>
+        )}
+
+        {activeTab ===
+          'deletions' && (
+          <>
+            <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <StatCard
+                icon={
+                  <AlertTriangle className="h-5 w-5" />
+                }
+                label="طلبات الحذف"
+                value={
+                  deletionRequests.length
+                }
+              />
+
+              <StatCard
+                icon={
+                  <Clock3 className="h-5 w-5" />
+                }
+                label="قيد المراجعة"
+                value={
+                  pendingDeletionRequests.length
+                }
+              />
+
+              <StatCard
+                icon={
+                  <Check className="h-5 w-5" />
+                }
+                label="تمت الموافقة"
+                value={
+                  deletionRequests.filter(
+                    (request) =>
+                      request.status ===
+                      'approved',
+                  ).length
+                }
+              />
+            </div>
+
+            {loadingRequests ? (
+              <LoadingState />
+            ) : deletionRequests.length ===
+              0 ? (
+              <EmptyState
+                icon={
+                  <AlertTriangle className="h-8 w-8" />
+                }
+                title="لا توجد طلبات حذف"
+                description="ستظهر طلبات حذف الحساب هنا."
+              />
+            ) : (
+              <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/10">
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[850px] text-right">
+                    <thead className="border-b border-white/10 bg-black/20">
+                      <tr>
+                        <th className="px-5 py-4 text-xs text-cream/50">
+                          المستخدم
+                        </th>
+
+                        <th className="px-5 py-4 text-xs text-cream/50">
+                          السبب
+                        </th>
+
+                        <th className="px-5 py-4 text-xs text-cream/50">
+                          التاريخ
+                        </th>
+
+                        <th className="px-5 py-4 text-xs text-cream/50">
+                          الحالة
+                        </th>
+
+                        <th className="px-5 py-4 text-xs text-cream/50">
+                          الإجراء
+                        </th>
+                      </tr>
+                    </thead>
+
+                    <tbody className="divide-y divide-white/5">
+                      {deletionRequests.map(
+                        (request) => (
+                          <tr
+                            key={
+                              request.id
+                            }
+                            className="hover:bg-white/[0.02]"
+                          >
+                            <td className="px-5 py-4">
+                              <div className="flex items-center gap-3">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gold/10 text-gold">
+                                  <User className="h-4 w-4" />
+                                </div>
+
+                                <div>
+                                  <p className="font-semibold text-cream">
+                                    {request
+                                      .profile
+                                      ?.name ||
+                                      'بدون اسم'}
+                                  </p>
+
+                                  <p className="text-xs text-cream/40">
+                                    {request
+                                      .profile
+                                      ?.email ||
+                                      request.user_id}
+                                  </p>
+                                </div>
+                              </div>
+                            </td>
+
+                            <td className="max-w-xs px-5 py-4">
+                              <p className="truncate text-sm text-cream/60">
+                                {
+                                  request.reason
+                                }
+                              </p>
+                            </td>
+
+                            <td className="px-5 py-4 text-sm text-cream/50">
+                              {formatDate(
+                                request.requested_at,
+                              )}
+                            </td>
+
+                            <td className="px-5 py-4">
+                              <span
+                                className={`rounded-full border px-3 py-1 text-xs font-semibold ${getDeletionStatusClasses(
+                                  request.status,
+                                )}`}
+                              >
+                                {getDeletionStatusLabel(
+                                  request.status,
+                                )}
+                              </span>
+                            </td>
+
+                            <td className="px-5 py-4">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedDeletionRequest(
+                                    request,
+                                  )
+
+                                  setAdminNote(
+                                    request.admin_note ??
+                                      '',
+                                  )
+                                }}
+                                className="inline-flex items-center gap-2 rounded-xl border border-gold/20 bg-gold/5 px-3 py-2 text-xs font-semibold text-gold hover:bg-gold/10"
+                              >
+                                <Eye className="h-4 w-4" />
+                                مراجعة
+                              </button>
+                            </td>
+                          </tr>
+                        ),
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </>
+        )}
       </div>
 
-      <div className="relative mx-auto max-w-7xl">
-        {/* ================================================================ */}
-        {/* HEADER */}
-        {/* ================================================================ */}
-
-        <motion.header
-          initial="hidden"
-          animate="visible"
-          variants={fadeUp}
-          custom={0}
-          className="mb-8"
+      {/* Salon Details Modal */}
+      {selectedSalon && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+          onClick={() =>
+            setSelectedSalon(
+              null,
+            )
+          }
         >
-          <div className="glass-panel-strong overflow-hidden rounded-[28px] border border-gold/12 p-6 sm:p-8">
-            <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+          <div
+            className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-3xl border border-white/10 bg-forest shadow-2xl"
+            onClick={(event) =>
+              event.stopPropagation()
+            }
+          >
+            <div className="sticky top-0 z-20 flex items-center justify-between border-b border-white/10 bg-forest/95 px-5 py-4 backdrop-blur">
               <div>
-                <div className="mb-4 inline-flex items-center gap-2.5 rounded-full border border-gold/20 bg-gold/8 px-4 py-2">
-                  <span className="relative flex h-2 w-2">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-gold opacity-70" />
-                    <span className="relative inline-flex h-2 w-2 rounded-full bg-gold" />
-                  </span>
+                <h2 className="text-xl font-bold text-cream">
+                  {selectedSalon.name}
+                </h2>
 
-                  <span className="text-[11px] font-bold tracking-wide text-gold">
-                    لوحة الإدارة
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-4">
-                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-gold/20 bg-gold/10">
-                    <Store className="h-7 w-7 text-gold" />
-                  </div>
-
-                  <div>
-                    <h1 className="text-2xl font-black text-cream sm:text-3xl">
-                      إدارة الصالونات
-                    </h1>
-
-                    <p className="mt-1.5 text-sm leading-relaxed text-cream/45">
-                      مراجعة طلبات الصالونات قبل الموافقة عليها
-                    </p>
-                  </div>
-                </div>
+                <p className="mt-1 text-xs text-cream/40">
+                  تفاصيل الصالون والخدمات والحلاقين والصور
+                </p>
               </div>
 
               <button
                 type="button"
-                onClick={() => {
-                  void loadPendingSalons()
-                }}
-                className="btn-outline inline-flex items-center justify-center gap-2.5 rounded-2xl px-6 py-3.5"
+                onClick={() =>
+                  setSelectedSalon(
+                    null,
+                  )
+                }
+                className="rounded-xl border border-white/10 bg-white/5 p-2 text-cream/60 hover:text-cream"
               >
-                <RefreshCw size={18} />
-                تحديث الطلبات
+                <X className="h-5 w-5" />
               </button>
             </div>
-          </div>
-        </motion.header>
 
-        {/* ================================================================ */}
-        {/* PENDING COUNTER */}
-        {/* ================================================================ */}
-
-        <motion.section
-          initial="hidden"
-          animate="visible"
-          variants={fadeUp}
-          custom={1}
-          className="mb-10"
-        >
-          <div className="relative overflow-hidden rounded-[26px] border border-gold/20 bg-gradient-to-l from-gold/12 via-gold/6 to-transparent p-6">
-            <div className="absolute -left-20 -top-20 h-40 w-40 rounded-full bg-gold/10 blur-3xl" />
-
-            <div className="relative flex items-center gap-4">
-              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-gold/20 bg-gold/10">
-                <CalendarDays className="h-6 w-6 text-gold" />
-              </div>
-
-              <div>
-                <p className="text-lg font-black text-cream">
-                  الطلبات المعلقة
-                </p>
-
-                <p className="mt-1 text-sm text-cream/45">
-                  يوجد حاليًا{' '}
-                  <span className="font-black text-gold">
-                    {pendingSalons.length}
-                  </span>{' '}
-                  طلب بانتظار المراجعة
-                </p>
-              </div>
-
-              <div className="mr-auto flex h-12 min-w-12 items-center justify-center rounded-full border border-gold/25 bg-gold/12 px-4">
-                <span className="text-xl font-black text-gold">
-                  {pendingSalons.length}
-                </span>
-              </div>
-            </div>
-          </div>
-        </motion.section>
-
-        {/* ================================================================ */}
-        {/* EMPTY STATE */}
-        {/* ================================================================ */}
-
-        {pendingSalons.length === 0 ? (
-          <motion.div
-            initial="hidden"
-            animate="visible"
-            variants={fadeUp}
-            custom={2}
-            className="glass-panel rounded-[28px] border border-white/7 p-12 text-center"
-          >
-            <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl border border-gold/15 bg-gold/7">
-              <Store className="h-9 w-9 text-gold/60" />
-            </div>
-
-            <h2 className="mt-6 text-2xl font-black text-cream">
-              لا توجد طلبات معلقة
-            </h2>
-
-            <p className="mt-2 text-sm text-cream/40">
-              جميع طلبات الصالونات تمت مراجعتها.
-            </p>
-          </motion.div>
-        ) : (
-          /* ================================================================ */
-          /* SALON CARDS */
-          /* ================================================================ */
-
-          <div className="grid gap-7 lg:grid-cols-2">
-            {pendingSalons.map((salon, index) => {
-              const images = getGalleryImages(salon)
-
-              return (
-                <motion.article
-                  key={salon.id}
-                  initial="hidden"
-                  whileInView="visible"
-                  viewport={{ once: true, amount: 0.15 }}
-                  variants={fadeUp}
-                  custom={index}
-                  className="group glass-panel overflow-hidden rounded-[28px] border border-white/7 card-hover"
-                >
-                  {/* Cover */}
-                  <div className="relative h-64 overflow-hidden">
-                    {salon.image ? (
-                      <img
-                        src={salon.image}
-                        alt={salon.name}
-                        className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105"
-                      />
-                    ) : (
-                      <div className="flex h-full items-center justify-center bg-ink/50">
-                        <ImageIcon
-                          size={58}
-                          className="text-cream/15"
-                        />
-                      </div>
-                    )}
-
-                    <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/25 to-transparent" />
-
-                    {/* Logo */}
-                    {salon.logo && (
-                      <div className="absolute bottom-5 right-5 h-20 w-20 overflow-hidden rounded-2xl border-2 border-gold/25 bg-white shadow-xl">
-                        <img
-                          src={salon.logo}
-                          alt={`${salon.name} logo`}
-                          className="h-full w-full object-cover"
-                        />
-                      </div>
-                    )}
-
-                    {/* Status */}
-                    <div className="absolute bottom-5 left-5 inline-flex items-center gap-2 rounded-full border border-gold/25 bg-ink/75 px-4 py-2 text-xs font-black text-gold backdrop-blur-md">
-                      <span className="h-1.5 w-1.5 rounded-full bg-gold" />
-                      قيد المراجعة
-                    </div>
-                  </div>
-
-                  {/* Card content */}
-                  <div className="p-6">
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <h2 className="text-2xl font-black text-cream">
-                          {salon.name}
-                        </h2>
-
-                        <p className="mt-2 line-clamp-2 text-sm leading-7 text-cream/45">
-                          {salon.description || 'لا يوجد وصف'}
-                        </p>
-                      </div>
-
-                      <div className="hidden h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-gold/15 bg-gold/7 sm:flex">
-                        <Store className="h-5 w-5 text-gold" />
-                      </div>
-                    </div>
-
-                    {/* Info grid */}
-                    <div className="mt-6 grid gap-3 sm:grid-cols-2">
-                      <InfoItem
-                        icon={<MapPin size={17} />}
-                        label="العنوان"
-                        value={
-                          salon.address ||
-                          salon.neighborhood ||
-                          'غير محدد'
-                        }
-                      />
-
-                      <InfoItem
-                        icon={<Phone size={17} />}
-                        label="الهاتف"
-                        value={salon.phone || 'غير محدد'}
-                      />
-
-                      <InfoItem
-                        icon={<Scissors size={17} />}
-                        label="الخدمات"
-                        value={`${salon.services.length} خدمة`}
-                      />
-
-                      <InfoItem
-                        icon={<Users size={17} />}
-                        label="الحلاقون"
-                        value={`${salon.barbers.length} حلاق`}
-                      />
-                    </div>
-
-                    {/* Images count */}
-                    <div className="mt-4 flex items-center justify-between rounded-2xl border border-white/7 bg-ink/35 px-4 py-3.5">
-                      <div className="flex items-center gap-2.5 text-sm text-cream/55">
-                        <ImageIcon
-                          size={18}
-                          className="text-gold"
-                        />
-                        صور الصالون
-                      </div>
-
-                      <span className="font-black text-gold">
-                        {images.length}
-                      </span>
-                    </div>
-
-                    {/* Actions */}
-                    <div className="mt-5 grid gap-3 sm:grid-cols-[1.2fr_1fr_0.75fr]">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedSalon(salon)}
-                        className="btn-outline inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-3.5 text-sm"
-                      >
-                        <Eye size={18} />
-                        التفاصيل
-                      </button>
-
-                      <button
-                        type="button"
-                        disabled={processingId === salon.id}
-                        onClick={() =>
-                          void handleApprove(salon.id)
-                        }
-                        className="btn-gold inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-3.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <Check size={18} />
-                        موافقة
-                      </button>
-
-                      <button
-                        type="button"
-                        disabled={processingId === salon.id}
-                        onClick={() =>
-                          void handleReject(salon.id)
-                        }
-                        className="inline-flex items-center justify-center gap-2 rounded-2xl border border-red-400/20 bg-red-400/8 px-4 py-3.5 text-sm font-bold text-red-300 transition-all duration-300 hover:border-red-400/35 hover:bg-red-400/15 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <X size={18} />
-                        رفض
-                      </button>
-                    </div>
-                  </div>
-                </motion.article>
-              )
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* ================================================================== */}
-      {/* DETAILS MODAL */}
-      {/* ================================================================== */}
-
-      {selectedSalon && (
-        <div
-          className="fixed inset-0 z-50 overflow-y-auto bg-ink/85 p-3 backdrop-blur-md sm:p-6"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setSelectedSalon(null)
-            }
-          }}
-        >
-          <div className="mx-auto my-3 max-w-6xl overflow-hidden rounded-[30px] border border-gold/15 bg-forest shadow-2xl sm:my-8">
-            {/* Modal header */}
-            <div className="sticky top-0 z-20 border-b border-white/7 bg-forest/95 px-5 py-5 backdrop-blur-xl sm:px-7">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <div className="mb-2 flex items-center gap-2">
-                    <Sparkles
-                      size={16}
-                      className="text-gold"
-                    />
-
-                    <span className="text-[11px] font-bold text-gold">
-                      تفاصيل الصالون
-                    </span>
-                  </div>
-
-                  <h2 className="text-xl font-black text-cream sm:text-2xl">
-                    {selectedSalon.name}
-                  </h2>
+            <div className="p-5">
+              {getSalonCoverImage(
+                selectedSalon,
+              ) ? (
+                <div className="mb-6 h-72 overflow-hidden rounded-2xl border border-white/10">
+                  <img
+                    src={
+                      getSalonCoverImage(
+                        selectedSalon,
+                      ) as string
+                    }
+                    alt={
+                      selectedSalon.name
+                    }
+                    className="h-full w-full object-cover"
+                  />
                 </div>
+              ) : (
+                <div className="mb-6 flex h-64 items-center justify-center rounded-2xl border border-white/10 bg-black/20">
+                  <ImageIcon className="h-12 w-12 text-cream/20" />
+                </div>
+              )}
 
-                <button
-                  type="button"
-                  onClick={() => setSelectedSalon(null)}
-                  className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/8 bg-white/5 text-cream/60 transition hover:border-gold/25 hover:bg-gold/10 hover:text-gold"
-                >
-                  <X size={21} />
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-10 p-5 sm:p-7">
-              {/* ========================================================== */}
-              {/* IMAGES */}
-              {/* ========================================================== */}
-
-              <section>
-                <SectionTitle
-                  icon={<ImageIcon size={20} />}
-                  title="صور الصالون"
-                  count={getGalleryImages(selectedSalon).length}
+              {/* Basic Information */}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <DetailItem
+                  icon={
+                    <Store className="h-4 w-4" />
+                  }
+                  label="اسم الصالون"
+                  value={
+                    selectedSalon.name
+                  }
                 />
 
-                {getGalleryImages(selectedSalon).length > 0 ? (
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    {getGalleryImages(selectedSalon).map(
-                      (image, index) => (
+                <DetailItem
+                  icon={
+                    <MapPin className="h-4 w-4" />
+                  }
+                  label="العنوان"
+                  value={
+                    selectedSalon.address ||
+                    'غير محدد'
+                  }
+                />
+
+                <DetailItem
+                  icon={
+                    <Phone className="h-4 w-4" />
+                  }
+                  label="الهاتف"
+                  value={
+                    selectedSalon.phone ||
+                    'غير محدد'
+                  }
+                />
+
+                <DetailItem
+                  icon={
+                    <MapPin className="h-4 w-4" />
+                  }
+                  label="الولاية"
+                  value={
+                    selectedSalon.wilaya ||
+                    'غير محدد'
+                  }
+                />
+
+                <DetailItem
+                  icon={
+                    <MapPin className="h-4 w-4" />
+                  }
+                  label="البلدية"
+                  value={
+                    selectedSalon.commune ||
+                    'غير محدد'
+                  }
+                />
+
+                <DetailItem
+                  icon={
+                    <Store className="h-4 w-4" />
+                  }
+                  label="التصنيف"
+                  value={
+                    selectedSalon.category ||
+                    selectedSalon.type ||
+                    'غير محدد'
+                  }
+                />
+              </div>
+
+              {/* Description */}
+              {selectedSalon.description && (
+                <div className="mt-5 rounded-2xl border border-white/10 bg-black/10 p-4">
+                  <h3 className="mb-2 text-sm font-semibold text-gold">
+                    وصف الصالون
+                  </h3>
+
+                  <p className="whitespace-pre-wrap text-sm leading-7 text-cream/65">
+                    {
+                      selectedSalon.description
+                    }
+                  </p>
+                </div>
+              )}
+
+              {/* Services */}
+              <section className="mt-7">
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="text-lg font-bold text-cream">
+                    الخدمات
+                  </h3>
+
+                  <span className="rounded-full border border-gold/20 bg-gold/10 px-3 py-1 text-xs font-semibold text-gold">
+                    {
+                      selectedSalon
+                        .services
+                        .length
+                    }{' '}
+                    خدمات
+                  </span>
+                </div>
+
+                {selectedSalon.services
+                  .length === 0 ? (
+                  <EmptySection message="لا توجد خدمات مسجلة لهذا الصالون." />
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {selectedSalon.services.map(
+                      (service) => (
                         <div
-                          key={`${image}-${index}`}
-                          className="group overflow-hidden rounded-[22px] border border-white/7 bg-ink/35"
+                          key={
+                            service.id
+                          }
+                          className="rounded-2xl border border-white/10 bg-black/10 p-4"
                         >
-                          <div className="relative h-56 overflow-hidden">
-                            <img
-                              src={image}
-                              alt={`${selectedSalon.name} - ${index + 1}`}
-                              className="h-full w-full object-cover transition duration-700 group-hover:scale-105"
-                              onError={(event) => {
-                                event.currentTarget.style.display =
-                                  'none'
-                              }}
-                            />
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h4 className="font-semibold text-cream">
+                                {
+                                  service.name
+                                }
+                              </h4>
 
-                            <div className="absolute inset-0 bg-gradient-to-t from-ink/70 to-transparent" />
-
-                            <div className="absolute bottom-3 right-3 rounded-full border border-gold/20 bg-ink/70 px-3 py-1.5 text-[11px] font-bold text-gold backdrop-blur-md">
-                              صورة {index + 1}
+                              <p className="mt-1 text-xs text-gold/70">
+                                {
+                                  service.category
+                                }
+                              </p>
                             </div>
+
+                            <span className="rounded-lg bg-gold/10 px-2.5 py-1 text-xs font-bold text-gold">
+                              {Number(
+                                service.price ??
+                                  0,
+                              ).toLocaleString(
+                                'ar-DZ',
+                              )}{' '}
+                              دج
+                            </span>
+                          </div>
+
+                          {service.description && (
+                            <p className="mt-3 text-sm leading-6 text-cream/50">
+                              {
+                                service.description
+                              }
+                            </p>
+                          )}
+
+                          <div className="mt-3 flex items-center gap-2 text-xs text-cream/35">
+                            <Clock3 className="h-3.5 w-3.5" />
+
+                            {Number(
+                              service.duration ??
+                                0,
+                            )}{' '}
+                            دقيقة
                           </div>
                         </div>
                       ),
                     )}
                   </div>
-                ) : (
-                  <EmptyText text="لا توجد صور لهذا الصالون" />
                 )}
               </section>
 
-              {/* ========================================================== */}
-              {/* SALON INFORMATION */}
-              {/* ========================================================== */}
+              {/* Barbers */}
+              <section className="mt-7">
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="text-lg font-bold text-cream">
+                    الحلاقون
+                  </h3>
 
-              <section>
-                <SectionTitle
-                  icon={<Store size={20} />}
-                  title="معلومات الصالون"
-                />
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <InfoItem
-                    icon={<Store size={18} />}
-                    label="اسم الصالون"
-                    value={selectedSalon.name}
-                  />
-
-                  <InfoItem
-                    icon={<Scissors size={18} />}
-                    label="النوع"
-                    value={selectedSalon.type}
-                  />
-
-                  <InfoItem
-                    icon={<MapPin size={18} />}
-                    label="الولاية / المنطقة"
-                    value={
-                      selectedSalon.neighborhood ||
-                      'غير محدد'
-                    }
-                  />
-
-                  <InfoItem
-                    icon={<MapPin size={18} />}
-                    label="العنوان"
-                    value={
-                      selectedSalon.address ||
-                      'غير محدد'
-                    }
-                  />
-
-                  <InfoItem
-                    icon={<Phone size={18} />}
-                    label="الهاتف"
-                    value={
-                      selectedSalon.phone ||
-                      'غير محدد'
-                    }
-                  />
-
-                  <InfoItem
-                    icon={<Clock size={18} />}
-                    label="ساعات العمل"
-                    value={
-                      selectedSalon.workingHours ||
-                      'حسب المواعيد'
-                    }
-                  />
+                  <span className="rounded-full border border-gold/20 bg-gold/10 px-3 py-1 text-xs font-semibold text-gold">
+                    {
+                      selectedSalon
+                        .barbers
+                        .length
+                    }{' '}
+                    حلاقين
+                  </span>
                 </div>
 
-                <div className="mt-4 rounded-[22px] border border-white/7 bg-ink/30 p-5">
-                  <p className="mb-2 text-xs font-semibold text-gold/65">
-                    الوصف
-                  </p>
+                {selectedSalon.barbers
+                  .length === 0 ? (
+                  <EmptySection message="لا يوجد حلاقون مسجلون لهذا الصالون." />
+                ) : (
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {selectedSalon.barbers.map(
+                      (barber) => (
+                        <div
+                          key={
+                            barber.id
+                          }
+                          className="overflow-hidden rounded-2xl border border-white/10 bg-black/10"
+                        >
+                          <div className="h-48 bg-black/20">
+                            {barber.image ? (
+                              <img
+                                src={
+                                  barber.image
+                                }
+                                alt={
+                                  barber.name
+                                }
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <div className="flex h-full items-center justify-center">
+                                <User className="h-12 w-12 text-cream/15" />
+                              </div>
+                            )}
+                          </div>
 
-                  <p className="leading-8 text-cream/60">
-                    {selectedSalon.description ||
-                      'لا يوجد وصف لهذا الصالون.'}
-                  </p>
-                </div>
-              </section>
-
-              {/* ========================================================== */}
-              {/* SERVICES */}
-              {/* ========================================================== */}
-
-              <section>
-                <SectionTitle
-                  icon={<Scissors size={20} />}
-                  title="الخدمات"
-                  count={selectedSalon.services.length}
-                />
-
-                {selectedSalon.services.length > 0 ? (
-                  <div className="grid gap-4 md:grid-cols-2">
-                    {selectedSalon.services.map((service) => (
-                      <div
-                        key={service.id}
-                        className="group rounded-[22px] border border-white/7 bg-ink/30 p-5 transition-all duration-300 hover:border-gold/20 hover:bg-gold/[0.025]"
-                      >
-                        <div className="flex items-start justify-between gap-4">
-                          <div>
-                            <h4 className="text-lg font-black text-cream">
-                              {service.name}
+                          <div className="p-4">
+                            <h4 className="font-bold text-cream">
+                              {
+                                barber.name
+                              }
                             </h4>
 
-                            <p className="mt-1.5 text-xs text-gold/55">
-                              {service.category}
+                            <p className="mt-1 text-xs text-gold">
+                              {
+                                barber.role
+                              }
                             </p>
-                          </div>
 
-                          <span className="whitespace-nowrap text-lg font-black text-gold">
-                            {formatPrice(service.price)}{' '}
-                            <span className="text-xs font-semibold text-gold/55">
-                              دج
-                            </span>
-                          </span>
-                        </div>
+                            <div className="mt-3 grid grid-cols-2 gap-2">
+                              <InfoBox
+                                label="الخبرة"
+                                value={
+                                  barber.experience ||
+                                  'غير محدد'
+                                }
+                              />
 
-                        <div className="mt-4 flex items-center gap-2 text-sm text-cream/45">
-                          <Clock size={15} />
-                          {service.duration} دقيقة
-                        </div>
-
-                        {service.description && (
-                          <p className="mt-3 text-sm leading-7 text-cream/45">
-                            {service.description}
-                          </p>
-                        )}
-
-                        {service.popular && (
-                          <div className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-gold/20 bg-gold/8 px-3 py-1.5 text-[11px] font-bold text-gold">
-                            <Sparkles size={12} />
-                            خدمة مشهورة
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <EmptyText text="لا توجد خدمات مسجلة لهذا الصالون" />
-                )}
-              </section>
-
-              {/* ========================================================== */}
-              {/* BARBERS */}
-              {/* ========================================================== */}
-
-              <section>
-                <SectionTitle
-                  icon={<Users size={20} />}
-                  title="الحلاقون"
-                  count={selectedSalon.barbers.length}
-                />
-
-                {selectedSalon.barbers.length > 0 ? (
-                  <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                    {selectedSalon.barbers.map((barber) => (
-                      <div
-                        key={barber.id}
-                        className="group overflow-hidden rounded-[22px] border border-white/7 bg-ink/30"
-                      >
-                        <div className="relative h-56 overflow-hidden bg-ink/50">
-                          {barber.image ? (
-                            <img
-                              src={barber.image}
-                              alt={barber.name}
-                              className="h-full w-full object-cover transition duration-700 group-hover:scale-105"
-                            />
-                          ) : (
-                            <div className="flex h-full items-center justify-center">
-                              <Users
-                                size={50}
-                                className="text-cream/15"
+                              <InfoBox
+                                label="التقييم"
+                                value={`${Number(
+                                  barber.rating ??
+                                    5,
+                                ).toFixed(
+                                  1,
+                                )}/5`}
                               />
                             </div>
-                          )}
 
-                          <div className="absolute inset-0 bg-gradient-to-t from-ink/80 via-transparent to-transparent" />
-                        </div>
-
-                        <div className="p-5">
-                          <h4 className="text-lg font-black text-cream">
-                            {barber.name}
-                          </h4>
-
-                          <p className="mt-1.5 text-sm font-semibold text-gold">
-                            {barber.role}
-                          </p>
-
-                          <p className="mt-3 text-sm text-cream/45">
-                            الخبرة:{' '}
-                            <span className="text-cream/65">
-                              {barber.experience}
-                            </span>
-                          </p>
-
-                          <div className="mt-4">
-                            <p className="mb-2 text-xs font-semibold text-cream/35">
-                              التخصصات
-                            </p>
-
-                            {barber.specialties.length > 0 ? (
-                              <div className="flex flex-wrap gap-2">
+                            {barber.specialties?.length >
+                              0 && (
+                              <div className="mt-3 flex flex-wrap gap-1.5">
                                 {barber.specialties.map(
-                                  (specialty, index) => (
+                                  (
+                                    specialty,
+                                    index,
+                                  ) => (
                                     <span
-                                      key={`${specialty}-${index}`}
-                                      className="rounded-full border border-white/7 bg-white/4 px-3 py-1.5 text-[11px] text-cream/55"
+                                      key={`${barber.id}-${index}`}
+                                      className="rounded-full bg-gold/5 px-2.5 py-1 text-[11px] text-gold/75"
                                     >
-                                      {specialty}
+                                      {
+                                        specialty
+                                      }
                                     </span>
                                   ),
                                 )}
                               </div>
-                            ) : (
-                              <p className="text-sm text-cream/30">
-                                لا توجد تخصصات
-                              </p>
                             )}
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      ),
+                    )}
                   </div>
-                ) : (
-                  <EmptyText text="لا يوجد حلاقون مسجلون لهذا الصالون" />
                 )}
               </section>
 
-              {/* ========================================================== */}
-              {/* WORKING HOURS */}
-              {/* ========================================================== */}
+              {/* Gallery */}
+              <section className="mt-7">
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="text-lg font-bold text-cream">
+                    صور الصالون
+                  </h3>
 
-              <section>
-                <SectionTitle
-                  icon={<Clock size={20} />}
-                  title="أوقات العمل"
-                />
-
-                <div className="rounded-[22px] border border-white/7 bg-ink/30 p-5">
-                  {selectedSalon.workingHours ? (
-                    <p className="leading-8 text-cream/60">
-                      {selectedSalon.workingHours}
-                    </p>
-                  ) : (
-                    <EmptyText text="لا توجد أوقات عمل مسجلة" />
-                  )}
+                  <span className="rounded-full border border-gold/20 bg-gold/10 px-3 py-1 text-xs font-semibold text-gold">
+                    {
+                      getSalonGallery(
+                        selectedSalon,
+                      ).length
+                    }{' '}
+                    صور
+                  </span>
                 </div>
+
+                {getSalonGallery(
+                  selectedSalon,
+                ).length === 0 ? (
+                  <EmptySection message="لا توجد صور مرفوعة لهذا الصالون." />
+                ) : (
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                    {getSalonGallery(
+                      selectedSalon,
+                    ).map(
+                      (
+                        image,
+                        index,
+                      ) => (
+                        <div
+                          key={`${image}-${index}`}
+                          className="aspect-square overflow-hidden rounded-2xl border border-white/10 bg-black/20"
+                        >
+                          <img
+                            src={
+                              image
+                            }
+                            alt={`${selectedSalon.name} ${index + 1}`}
+                            className="h-full w-full object-cover transition duration-500 hover:scale-105"
+                          />
+                        </div>
+                      ),
+                    )}
+                  </div>
+                )}
               </section>
 
-              {/* ========================================================== */}
-              {/* CONTACT */}
-              {/* ========================================================== */}
-
-              <section>
-                <SectionTitle
-                  icon={<MessageCircle size={20} />}
-                  title="التواصل"
-                />
-
-                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-                  <ContactRow
-                    icon={<Phone size={18} />}
-                    label="الهاتف"
-                    value={
-                      selectedSalon.phone ||
-                      'غير متوفر'
-                    }
-                  />
-
-                  <ContactRow
-                    icon={<MessageCircle size={18} />}
-                    label="واتساب"
-                    value="متوفر من بيانات الصالون"
-                  />
-
-                  <ContactRow
-                    icon={<Instagram size={18} />}
-                    label="Instagram"
-                    value="يظهر إذا كان مسجلاً"
-                  />
-
-                  <ContactRow
-                    icon={<Facebook size={18} />}
-                    label="Facebook"
-                    value="يظهر إذا كان مسجلاً"
-                  />
-                </div>
-              </section>
-
-              {/* ========================================================== */}
-              {/* FINAL ACTIONS */}
-              {/* ========================================================== */}
-
-              <section className="border-t border-white/7 pt-7">
-                <div className="flex flex-col gap-3 sm:flex-row">
+              {/* Salon Actions */}
+              <div className="mt-7 flex gap-3">
+                {selectedSalon.status !==
+                  'approved' && (
                   <button
                     type="button"
                     disabled={
-                      processingId === selectedSalon.id
+                      processingSalon ===
+                      selectedSalon.id
                     }
                     onClick={() =>
-                      void handleApprove(selectedSalon.id)
+                      void handleSalonStatus(
+                        selectedSalon.id,
+                        'approved',
+                      )
                     }
-                    className="btn-gold flex flex-1 items-center justify-center gap-2 rounded-2xl px-5 py-4 font-black disabled:cursor-not-allowed disabled:opacity-50"
+                    className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gold px-4 py-3 text-sm font-bold text-forest hover:bg-gold/90 disabled:opacity-50"
                   >
-                    <Check size={20} />
-                    الموافقة على الصالون
+                    <Check className="h-4 w-4" />
+                    قبول الصالون
                   </button>
+                )}
 
+                {selectedSalon.status !==
+                  'rejected' && (
                   <button
                     type="button"
                     disabled={
-                      processingId === selectedSalon.id
+                      processingSalon ===
+                      selectedSalon.id
                     }
                     onClick={() =>
-                      void handleReject(selectedSalon.id)
+                      void handleSalonStatus(
+                        selectedSalon.id,
+                        'rejected',
+                      )
                     }
-                    className="flex flex-1 items-center justify-center gap-2 rounded-2xl border border-red-400/20 bg-red-400/8 px-5 py-4 font-black text-red-300 transition-all duration-300 hover:border-red-400/35 hover:bg-red-400/15 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-400 hover:bg-red-500/15 disabled:opacity-50"
                   >
-                    <X size={20} />
+                    <X className="h-4 w-4" />
                     رفض الصالون
                   </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Deletion Request Modal */}
+      {selectedDeletionRequest && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+          onClick={() => {
+            setSelectedDeletionRequest(
+              null,
+            )
+            setAdminNote('')
+          }}
+        >
+          <div
+            className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-3xl border border-white/10 bg-forest shadow-2xl"
+            onClick={(event) =>
+              event.stopPropagation()
+            }
+          >
+            <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
+              <div>
+                <h2 className="text-lg font-bold text-cream">
+                  طلب حذف الحساب
+                </h2>
+
+                <p className="text-xs text-cream/40">
+                  مراجعة طلب المستخدم
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedDeletionRequest(
+                    null,
+                  )
+                  setAdminNote('')
+                }}
+                className="rounded-xl border border-white/10 bg-white/5 p-2 text-cream/60 hover:text-cream"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-5 p-5">
+              <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gold/10 text-gold">
+                    <User className="h-5 w-5" />
+                  </div>
+
+                  <div>
+                    <p className="font-semibold text-cream">
+                      {selectedDeletionRequest
+                        .profile
+                        ?.name ||
+                        'مستخدم بدون اسم'}
+                    </p>
+
+                    <p className="text-xs text-cream/40">
+                      {selectedDeletionRequest
+                        .profile
+                        ?.email ||
+                        selectedDeletionRequest.user_id}
+                    </p>
+                  </div>
                 </div>
-              </section>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="font-semibold text-cream">
+                    سبب الطلب
+                  </h3>
+
+                  <span
+                    className={`rounded-full border px-3 py-1 text-xs font-semibold ${getDeletionStatusClasses(
+                      selectedDeletionRequest.status,
+                    )}`}
+                  >
+                    {getDeletionStatusLabel(
+                      selectedDeletionRequest.status,
+                    )}
+                  </span>
+                </div>
+
+                <p className="mb-3 text-xs text-cream/40">
+                  {formatDateTime(
+                    selectedDeletionRequest.requested_at,
+                  )}
+                </p>
+
+                <p className="whitespace-pre-wrap text-sm leading-7 text-cream/70">
+                  {
+                    selectedDeletionRequest.reason
+                  }
+                </p>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="admin-note"
+                  className="mb-2 block text-sm font-semibold text-cream"
+                >
+                  ملاحظة المدير
+                </label>
+
+                <textarea
+                  id="admin-note"
+                  value={adminNote}
+                  onChange={(
+                    event,
+                  ) =>
+                    setAdminNote(
+                      event.target
+                        .value,
+                    )
+                  }
+                  rows={4}
+                  placeholder="اكتب ملاحظة حول القرار..."
+                  className="w-full resize-none rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-cream outline-none placeholder:text-cream/25 focus:border-gold/40"
+                />
+              </div>
+
+              {selectedDeletionRequest.status ===
+              'pending' ? (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    disabled={
+                      processingRequest ===
+                      selectedDeletionRequest.id
+                    }
+                    onClick={() =>
+                      void handleDeletionDecision(
+                        selectedDeletionRequest,
+                        'approved',
+                      )
+                    }
+                    className="flex items-center justify-center gap-2 rounded-xl bg-gold px-4 py-3 text-sm font-bold text-forest hover:bg-gold/90 disabled:opacity-50"
+                  >
+                    <Check className="h-4 w-4" />
+                    الموافقة
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={
+                      processingRequest ===
+                      selectedDeletionRequest.id
+                    }
+                    onClick={() =>
+                      void handleDeletionDecision(
+                        selectedDeletionRequest,
+                        'rejected',
+                      )
+                    }
+                    className="flex items-center justify-center gap-2 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-400 hover:bg-red-500/15 disabled:opacity-50"
+                  >
+                    <X className="h-4 w-4" />
+                    رفض
+                  </button>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-center text-sm text-cream/45">
+                  تمت مراجعة هذا الطلب مسبقًا.
+                </div>
+              )}
+
+              <div className="flex items-start gap-2 rounded-xl border border-gold/10 bg-gold/5 p-3">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-gold" />
+
+                <p className="text-xs leading-6 text-cream/45">
+                  يتم هنا تسجيل قرار المدير فقط. حذف المستخدم من Supabase Auth لا يتم تلقائيًا من هذه الصفحة.
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -963,81 +2225,55 @@ export default function AdminSalonsPage() {
   )
 }
 
-/*
- * ============================================================================
- * SECTION TITLE
- * ============================================================================
- */
-
-function SectionTitle({
-  icon,
-  title,
-  count,
-}: {
-  icon: ReactNode
-  title: string
-  count?: number
-}) {
-  return (
-    <div className="mb-5 flex items-center justify-between gap-4">
-      <div className="flex items-center gap-3">
-        <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-gold/15 bg-gold/7 text-gold">
-          {icon}
-        </span>
-
-        <h3 className="text-xl font-black text-cream">
-          {title}
-        </h3>
-      </div>
-
-      {typeof count === 'number' && (
-        <span className="rounded-full border border-gold/20 bg-gold/8 px-3 py-1 text-xs font-black text-gold">
-          {count}
-        </span>
-      )}
-    </div>
-  )
-}
-
-/*
- * ============================================================================
- * INFO ITEM
- * ============================================================================
- */
-
-function InfoItem({
+function StatCard({
   icon,
   label,
   value,
 }: {
   icon: ReactNode
   label: string
-  value: string
+  value: number
 }) {
   return (
-    <div className="rounded-[18px] border border-white/7 bg-ink/25 p-4 transition-all duration-300 hover:border-gold/15">
-      <div className="mb-2.5 flex items-center gap-2 text-gold">
-        {icon}
+    <div className="rounded-2xl border border-white/10 bg-black/10 p-5">
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-gold/20 bg-gold/10 text-gold">
+          {icon}
+        </div>
 
-        <span className="text-[11px] font-semibold text-cream/35">
-          {label}
+        <span className="text-2xl font-bold text-cream">
+          {value}
         </span>
       </div>
 
-      <p className="break-words text-sm font-semibold leading-6 text-cream/70">
+      <p className="text-sm text-cream/50">
+        {label}
+      </p>
+    </div>
+  )
+}
+
+function InfoBox({
+  label,
+  value,
+}: {
+  label: string
+  value: string
+}) {
+  return (
+    <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+      <p className="text-[11px] text-cream/35">
+        {label}
+      </p>
+
+      <p className="mt-1 truncate text-sm font-semibold text-cream/75">
         {value}
       </p>
     </div>
   )
 }
 
-/*
- * ============================================================================
- * CONTACT ROW
- * ============================================================================
- */
-
-function ContactRow({
+function DetailItem({
   icon,
   label,
   value,
@@ -1047,34 +2283,70 @@ function ContactRow({
   value: string
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-[18px] border border-white/7 bg-ink/25 p-4">
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gold/15 bg-gold/7 text-gold">
+    <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+      <div className="mb-1 flex items-center gap-2 text-xs text-gold/70">
         {icon}
-      </span>
 
-      <div className="min-w-0">
-        <p className="text-[10px] font-semibold text-cream/30">
-          {label}
-        </p>
+        <span>{label}</span>
+      </div>
 
-        <p className="mt-1 truncate text-sm font-medium text-cream/60">
-          {value}
+      <p className="break-words text-sm text-cream/70">
+        {value}
+      </p>
+    </div>
+  )
+}
+
+function LoadingState() {
+  return (
+    <div className="flex min-h-[280px] items-center justify-center rounded-2xl border border-white/10 bg-black/10">
+      <div className="flex flex-col items-center gap-3">
+        <RefreshCw className="h-7 w-7 animate-spin text-gold" />
+
+        <p className="text-sm text-cream/45">
+          جاري تحميل البيانات...
         </p>
       </div>
     </div>
   )
 }
 
-/*
- * ============================================================================
- * EMPTY TEXT
- * ============================================================================
- */
-
-function EmptyText({ text }: { text: string }) {
+function EmptyState({
+  icon,
+  title,
+  description,
+}: {
+  icon: ReactNode
+  title: string
+  description: string
+}) {
   return (
-    <div className="rounded-[22px] border border-dashed border-white/10 bg-ink/25 p-8 text-center text-sm text-cream/35">
-      {text}
+    <div className="flex min-h-[280px] flex-col items-center justify-center rounded-2xl border border-white/10 bg-black/10 px-6 text-center">
+      <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-gold/10 bg-gold/5 text-gold/60">
+        {icon}
+      </div>
+
+      <h2 className="text-lg font-bold text-cream">
+        {title}
+      </h2>
+
+      <p className="mt-2 max-w-md text-sm leading-6 text-cream/40">
+        {description}
+      </p>
+    </div>
+  )
+}
+
+function EmptySection({
+  message,
+}: {
+  message: string
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/10 p-6 text-center">
+      <p className="text-sm text-cream/40">
+        {message}
+      </p>
     </div>
   )
 }

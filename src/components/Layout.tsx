@@ -54,6 +54,7 @@ export function Logo({ compact = false }: { compact?: boolean }) {
 export function Navbar() {
   const [open, setOpen] = useState(false)
   const [scrolled, setScrolled] = useState(false)
+
   const location = useLocation()
 
   const { user, isAdmin, logout } = useStore()
@@ -62,6 +63,7 @@ export function Navbar() {
     const onScroll = () => setScrolled(window.scrollY > 24)
 
     onScroll()
+
     window.addEventListener('scroll', onScroll, { passive: true })
 
     return () => window.removeEventListener('scroll', onScroll)
@@ -79,8 +81,14 @@ export function Navbar() {
     }
   }, [open])
 
+  /*
+   * ADMIN
+   * Admin users should never be treated as normal clients.
+   */
+  const profilePath = isAdmin ? '/admin/account' : '/dashboard'
+
   return (
-    <header className="fixed top-0 inset-x-0 z-50">
+   <header className="relative z-40 w-full">
       {/* Top bar */}
       <div
         className={cn(
@@ -154,6 +162,7 @@ export function Navbar() {
           >
             <Logo compact={scrolled} />
 
+            {/* Desktop navigation */}
             <ul className="hidden lg:flex items-center gap-1">
               {NAV_LINKS.map((link) => {
                 const isActive =
@@ -183,10 +192,11 @@ export function Navbar() {
               })}
             </ul>
 
+            {/* Account actions */}
             <div className="flex items-center gap-2.5">
               {user ? (
                 <>
-                  {/* ADMIN DASHBOARD */}
+                  {/* ADMIN PANEL */}
                   {isAdmin && (
                     <Link
                       to="/admin/salons"
@@ -198,7 +208,7 @@ export function Navbar() {
                   )}
 
                   {/* OWNER CRM */}
-                  {user.type === 'owner' && (
+                  {!isAdmin && user.type === 'owner' && (
                     <Link
                       to="/crm"
                       className="hidden sm:flex items-center gap-2 px-4 py-2.5 rounded-xl border border-white/12 text-cream/85 text-sm font-semibold hover:border-gold/45 hover:text-gold transition-all"
@@ -208,19 +218,21 @@ export function Navbar() {
                     </Link>
                   )}
 
+                  {/* USER / ADMIN ACCOUNT */}
                   <Link
-                    to="/dashboard"
+                    to={profilePath}
                     className="hidden sm:flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gold/10 border border-gold/25 text-gold text-sm font-semibold hover:bg-gold/20 transition-all"
                   >
                     <span className="w-7 h-7 rounded-full bg-gradient-to-br from-gold-light to-gold-dark text-ink text-xs font-black flex items-center justify-center">
-                      {user.name.charAt(0)}
+                      {user.name.charAt(0).toUpperCase()}
                     </span>
 
-                    <span className="max-w-[90px] truncate">
+                    <span className="max-w-[110px] truncate">
                       {user.name}
                     </span>
                   </Link>
 
+                  {/* LOGOUT */}
                   <button
                     onClick={logout}
                     className="hidden sm:block px-4 py-2.5 rounded-xl border border-white/10 text-cream/70 text-sm font-semibold hover:border-red-400/40 hover:text-red-300 transition-all"
@@ -246,6 +258,7 @@ export function Navbar() {
                 </>
               )}
 
+              {/* Mobile menu button */}
               <button
                 onClick={() => setOpen(true)}
                 className="lg:hidden w-11 h-11 rounded-xl border border-white/12 flex items-center justify-center text-cream hover:border-gold/45 hover:text-gold transition-all"
@@ -267,17 +280,20 @@ export function Navbar() {
             : 'opacity-0 pointer-events-none',
         )}
       >
+        {/* Overlay */}
         <div
           className="absolute inset-0 bg-black/70 backdrop-blur-sm"
           onClick={() => setOpen(false)}
         />
 
+        {/* Drawer */}
         <div
           className={cn(
             'absolute top-0 right-0 h-full w-[86%] max-w-[360px] bg-forest-light border-l border-gold/15 shadow-2xl transition-transform duration-400 ease-out flex flex-col',
             open ? 'translate-x-0' : 'translate-x-full',
           )}
         >
+          {/* Drawer header */}
           <div className="flex items-center justify-between p-5 border-b border-white/8">
             <Logo compact />
 
@@ -290,6 +306,7 @@ export function Navbar() {
             </button>
           </div>
 
+          {/* Drawer navigation */}
           <nav className="flex-1 overflow-y-auto p-5">
             <ul className="space-y-1.5">
               {NAV_LINKS.map((link) => {
@@ -316,22 +333,33 @@ export function Navbar() {
               })}
             </ul>
 
+            {/* Account section */}
             <div className="mt-6 pt-6 border-t border-white/8 space-y-3">
               {user ? (
                 <>
-                  {/* ADMIN DASHBOARD - MOBILE */}
+                  {/* ADMIN MOBILE */}
                   {isAdmin && (
-                    <Link
-                      to="/admin/salons"
-                      onClick={() => setOpen(false)}
-                      className="block w-full text-center py-3.5 rounded-2xl bg-gold/12 border border-gold/25 text-gold font-bold"
-                    >
-                      لوحة الإدارة
-                    </Link>
+                    <>
+                      <Link
+                        to="/admin/salons"
+                        onClick={() => setOpen(false)}
+                        className="block w-full text-center py-3.5 rounded-2xl bg-gold/12 border border-gold/25 text-gold font-bold"
+                      >
+                        لوحة الإدارة
+                      </Link>
+
+                      <Link
+                        to="/admin/account"
+                        onClick={() => setOpen(false)}
+                        className="block w-full text-center py-3.5 rounded-2xl border border-gold/20 text-cream/85 font-semibold hover:text-gold hover:border-gold/40 transition-all"
+                      >
+                        حساب المدير
+                      </Link>
+                    </>
                   )}
 
-                  {/* OWNER CRM - MOBILE */}
-                  {user.type === 'owner' && (
+                  {/* OWNER MOBILE */}
+                  {!isAdmin && user.type === 'owner' && (
                     <Link
                       to="/crm"
                       onClick={() => setOpen(false)}
@@ -341,14 +369,18 @@ export function Navbar() {
                     </Link>
                   )}
 
-                  <Link
-                    to="/dashboard"
-                    onClick={() => setOpen(false)}
-                    className="block w-full text-center py-3.5 rounded-2xl bg-gold/12 border border-gold/25 text-gold font-bold"
-                  >
-                    لوحة التحكم
-                  </Link>
+                  {/* NORMAL USER DASHBOARD */}
+                  {!isAdmin && (
+                    <Link
+                      to="/dashboard"
+                      onClick={() => setOpen(false)}
+                      className="block w-full text-center py-3.5 rounded-2xl bg-gold/12 border border-gold/25 text-gold font-bold"
+                    >
+                      لوحة التحكم
+                    </Link>
+                  )}
 
+                  {/* LOGOUT */}
                   <button
                     onClick={() => {
                       logout()
@@ -381,6 +413,7 @@ export function Navbar() {
             </div>
           </nav>
 
+          {/* Mobile contact */}
           <div className="p-5 border-t border-white/8 space-y-2.5 text-[13px] text-cream/55">
             <a
               href={`tel:${SITE.phone.replace(/\s/g, '')}`}

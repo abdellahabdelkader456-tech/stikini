@@ -24,6 +24,12 @@ import { generateBookingCode } from './utils'
 import { supabase } from './supabase'
 
 /* -------------------------------------------------------------------------- */
+/* Types                                                                      */
+/* -------------------------------------------------------------------------- */
+
+type UserType = 'client' | 'owner'
+
+/* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
 /* -------------------------------------------------------------------------- */
 
@@ -67,7 +73,9 @@ interface StoreValue {
 
   /* Admin */
   isAdmin: boolean
+
   pendingSalons: Salon[]
+
   loadPendingSalons: () => Promise<void>
 
   approveSalon: (
@@ -95,6 +103,7 @@ interface StoreValue {
   ownerSalonBookings: Booking[]
 
   favorites: string[]
+
   toasts: ToastItem[]
 
   login: (
@@ -104,6 +113,8 @@ interface StoreValue {
     ok: boolean
     error?: string
     message?: string
+    isAdmin?: boolean
+    userType?: UserType
   }>
 
   register: (input: {
@@ -111,7 +122,7 @@ interface StoreValue {
     email: string
     phone: string
     password: string
-    type: 'client' | 'owner'
+    type: UserType
   }) => Promise<{
     ok: boolean
     error?: string
@@ -245,12 +256,9 @@ function mapBooking(row: any): Booking {
     notes: String(row.notes ?? ''),
     totalPrice: Number(row.total_price ?? 0),
     discount: Number(row.discount ?? 0),
-    promoCode:
-      row.promo_code ?? undefined,
-    userId:
-      row.user_id ?? undefined,
-    status:
-      row.status ?? 'مؤكد',
+    promoCode: row.promo_code ?? undefined,
+    userId: row.user_id ?? undefined,
+    status: row.status ?? 'مؤكد',
     createdAt:
       row.created_at ??
       new Date().toISOString(),
@@ -334,14 +342,17 @@ function mapSalon(
     servicesRows.map((service: any) => ({
       id: String(service.id),
       name: String(service.name ?? ''),
-      category:
-        String(service.category ?? 'خدمات'),
+      category: String(
+        service.category ?? 'خدمات',
+      ),
       price: Number(service.price ?? 0),
-      duration: Number(service.duration ?? 0),
-      description:
-        String(service.description ?? ''),
-      popular:
-        service.popular === true,
+      duration: Number(
+        service.duration ?? 0,
+      ),
+      description: String(
+        service.description ?? '',
+      ),
+      popular: service.popular === true,
     }))
 
   /* ------------------------------- Barbers ------------------------------- */
@@ -355,7 +366,9 @@ function mapSalon(
 
       return {
         id: String(barber.id),
-        name: String(barber.name ?? ''),
+        name: String(
+          barber.name ?? '',
+        ),
         role: String(
           barber.role ?? 'حلاق',
         ),
@@ -372,27 +385,34 @@ function mapSalon(
       }
     })
 
-  /* ------------------------------- Images -------------------------------- */
+  /* -------------------------------- Images -------------------------------- */
 
   const databaseImages = imagesRows
-    .map((image: any) => image.image_url)
+    .map(
+      (image: any) =>
+        image.image_url,
+    )
     .filter(
       (url: any) =>
         typeof url === 'string' &&
         url.trim().length > 0,
     )
-    .map((url: string) => url.trim())
+    .map(
+      (url: string) =>
+        url.trim(),
+    )
 
   const logoImage = String(
     salonRow.logo_url ?? '',
   ).trim()
 
-  const coverFromDatabase = imagesRows.find(
-    (image: any) =>
-      image.is_cover === true ||
-      image.type === 'cover' ||
-      image.image_type === 'cover',
-  )?.image_url
+  const coverFromDatabase =
+    imagesRows.find(
+      (image: any) =>
+        image.is_cover === true ||
+        image.type === 'cover' ||
+        image.image_type === 'cover',
+    )?.image_url
 
   const coverImage = String(
     salonRow.cover_url ||
@@ -401,13 +421,6 @@ function mapSalon(
       '',
   ).trim()
 
-  /*
-   * Keep ALL images:
-   * - logo_url
-   * - cover_url
-   * - salon_images.image_url
-   */
-
   const gallery = Array.from(
     new Set(
       [
@@ -415,7 +428,9 @@ function mapSalon(
         coverImage,
         ...databaseImages,
       ].filter(
-        (url): url is string =>
+        (
+          url,
+        ): url is string =>
           typeof url === 'string' &&
           url.trim().length > 0,
       ),
@@ -468,39 +483,33 @@ function mapSalon(
       String(salonRow.id),
     ),
 
-    name:
-      String(
-        salonRow.name ?? 'صالون',
-      ),
+    name: String(
+      salonRow.name ?? 'صالون',
+    ),
 
-    tagline:
-      String(
-        salonRow.description ?? '',
-      ),
+    tagline: String(
+      salonRow.description ?? '',
+    ),
 
-    description:
-      String(
-        salonRow.description ?? '',
-      ),
+    description: String(
+      salonRow.description ?? '',
+    ),
 
     type,
 
-    neighborhood:
-      String(
-        salonRow.commune ||
-          salonRow.wilaya ||
-          'الجزائر العاصمة',
-      ),
+    neighborhood: String(
+      salonRow.commune ||
+        salonRow.wilaya ||
+        'الجزائر العاصمة',
+    ),
 
-    address:
-      String(
-        salonRow.address ?? '',
-      ),
+    address: String(
+      salonRow.address ?? '',
+    ),
 
-    phone:
-      String(
-        salonRow.phone ?? '',
-      ),
+    phone: String(
+      salonRow.phone ?? '',
+    ),
 
     rating: 5,
 
@@ -531,11 +540,10 @@ function mapSalon(
     verified:
       salonRow.status === 'approved',
 
-    established:
-      new Date(
-        salonRow.created_at ??
-          Date.now(),
-      ).getFullYear(),
+    established: new Date(
+      salonRow.created_at ??
+        Date.now(),
+    ).getFullYear(),
   }
 }
 
@@ -618,8 +626,8 @@ export function StoreProvider({
   /* Load approved salons                                                     */
   /* ------------------------------------------------------------------------ */
 
-  const loadSalons =
-    useCallback(async () => {
+  const loadSalons = useCallback(
+    async () => {
       try {
         const {
           data: salonRows,
@@ -715,25 +723,31 @@ export function StoreProvider({
 
         setSalons([])
       }
-    }, [])
+    },
+    [],
+  )
 
   /* ------------------------------------------------------------------------ */
   /* Load user                                                                 */
   /* ------------------------------------------------------------------------ */
 
-  const loadUserData =
-    useCallback(async () => {
+  const loadUserData = useCallback(
+    async () => {
       const {
         data: { session },
-      } =
-        await supabase.auth.getSession()
+      } = await supabase.auth.getSession()
 
       if (!session?.user) {
         setUser(null)
         setIsAdmin(false)
         setFavorites([])
         setPendingSalons([])
-        return
+
+        return {
+          user: null,
+          isAdmin: false,
+          userType: null as UserType | null,
+        }
       }
 
       const authUser =
@@ -741,6 +755,7 @@ export function StoreProvider({
 
       const {
         data: profile,
+        error: profileError,
       } = await supabase
         .from('profiles')
         .select('*')
@@ -750,16 +765,40 @@ export function StoreProvider({
         )
         .maybeSingle()
 
-      if (profile) {
-        setUser(
-          mapProfile(profile),
+      if (profileError) {
+        console.error(
+          'Profile loading error:',
+          profileError,
         )
 
-        setIsAdmin(
-          profile.is_admin === true,
-        )
+        setUser(null)
+        setIsAdmin(false)
+        setFavorites([])
+
+        return {
+          user: null,
+          isAdmin: false,
+          userType: null as UserType | null,
+        }
+      }
+
+      let mappedUser: User
+      let admin = false
+
+      if (profile) {
+        mappedUser =
+          mapProfile(profile)
+
+        admin =
+          profile.is_admin === true
       } else {
-        setUser({
+        const metadataType =
+          authUser.user_metadata
+            ?.type === 'owner'
+            ? 'owner'
+            : 'client'
+
+        mappedUser = {
           id: authUser.id,
 
           name:
@@ -777,11 +816,7 @@ export function StoreProvider({
             authUser.user_metadata
               ?.phone ?? '',
 
-          type:
-            authUser.user_metadata
-              ?.type === 'owner'
-              ? 'owner'
-              : 'client',
+          type: metadataType,
 
           salonId:
             authUser.user_metadata
@@ -791,10 +826,13 @@ export function StoreProvider({
           createdAt:
             authUser.created_at ??
             new Date().toISOString(),
-        })
+        }
 
-        setIsAdmin(false)
+        admin = false
       }
+
+      setUser(mappedUser)
+      setIsAdmin(admin)
 
       const {
         data: favoriteRows,
@@ -812,7 +850,16 @@ export function StoreProvider({
             String(row.salon_id),
         ),
       )
-    }, [])
+
+      return {
+        user: mappedUser,
+        isAdmin: admin,
+        userType:
+          mappedUser.type as UserType,
+      }
+    },
+    [],
+  )
 
   /* ------------------------------------------------------------------------ */
   /* Load pending salons - ADMIN                                              */
@@ -836,8 +883,6 @@ export function StoreProvider({
           setPendingSalons([])
           return
         }
-
-        /* --------------------------- Check admin -------------------------- */
 
         const {
           data: profile,
@@ -869,8 +914,6 @@ export function StoreProvider({
           setPendingSalons([])
           return
         }
-
-        /* -------------------------- Load salons --------------------------- */
 
         const {
           data: salonRows,
@@ -905,8 +948,6 @@ export function StoreProvider({
         )
 
         const mappedSalons: Salon[] = []
-
-        /* --------------------- Load related information ------------------- */
 
         for (const salon of salonRows ?? []) {
           const salonId =
@@ -946,8 +987,6 @@ export function StoreProvider({
               ),
           ])
 
-          /* ----------------------- Services error ------------------------ */
-
           if (servicesResult.error) {
             console.error(
               `SERVICES ERROR - ${salon.name}:`,
@@ -960,8 +999,6 @@ export function StoreProvider({
             )
           }
 
-          /* ------------------------ Barbers error ------------------------- */
-
           if (barbersResult.error) {
             console.error(
               `BARBERS ERROR - ${salon.name}:`,
@@ -973,8 +1010,6 @@ export function StoreProvider({
               barbersResult.data,
             )
           }
-
-          /* ------------------------- Images error ------------------------- */
 
           if (imagesResult.error) {
             console.error(
@@ -1028,7 +1063,7 @@ export function StoreProvider({
     }, [])
 
   /* ------------------------------------------------------------------------ */
-  /* Approve salon                                                             */
+  /* Approve salon                                                            */
   /* ------------------------------------------------------------------------ */
 
   const approveSalon =
@@ -1100,7 +1135,7 @@ export function StoreProvider({
     )
 
   /* ------------------------------------------------------------------------ */
-  /* Reject salon                                                              */
+  /* Reject salon                                                             */
   /* ------------------------------------------------------------------------ */
 
   const rejectSalon =
@@ -1192,6 +1227,7 @@ export function StoreProvider({
             'Error loading bookings:',
             error,
           )
+
           return
         }
 
@@ -1221,6 +1257,11 @@ export function StoreProvider({
           await loadSalons()
           await loadUserData()
           await refreshPublicBookings()
+        } catch (error) {
+          console.error(
+            'Store initialization error:',
+            error,
+          )
         } finally {
           if (mounted) {
             setIsReady(true)
@@ -1248,7 +1289,14 @@ export function StoreProvider({
             return
           }
 
-          await loadUserData()
+          try {
+            await loadUserData()
+          } catch (error) {
+            console.error(
+              'Auth state profile loading error:',
+              error,
+            )
+          }
         },
       )
 
@@ -1302,14 +1350,93 @@ export function StoreProvider({
           }
         }
 
+        /*
+         * IMPORTANT:
+         * Read the profile directly after authentication.
+         * This prevents LoginPage from depending on React state
+         * being updated before navigation.
+         */
+
+        const {
+          data: profile,
+          error: profileError,
+        } = await supabase
+          .from('profiles')
+          .select('type, is_admin')
+          .eq(
+            'id',
+            data.user.id,
+          )
+          .maybeSingle()
+
+        if (profileError) {
+          console.error(
+            'Login profile loading error:',
+            profileError,
+          )
+
+          await supabase.auth.signOut()
+
+          return {
+            ok: false,
+            error:
+              'تعذر تحميل بيانات الحساب.',
+            message:
+              'تعذر تحميل بيانات الحساب.',
+          }
+        }
+
+        if (!profile) {
+          console.error(
+            'No profile found for authenticated user:',
+            data.user.id,
+          )
+
+          await supabase.auth.signOut()
+
+          return {
+            ok: false,
+            error:
+              'لم يتم العثور على ملف الحساب.',
+            message:
+              'لم يتم العثور على ملف الحساب.',
+          }
+        }
+
+        const admin: boolean =
+          profile.is_admin === true
+
+        /*
+         * Explicitly type this value.
+         * This fixes the TypeScript error:
+         * string is not assignable to "client" | "owner"
+         */
+        const userType: UserType =
+          profile.type === 'owner'
+            ? 'owner'
+            : 'client'
+
+        /*
+         * Update the global store.
+         */
         await loadUserData()
 
+        /*
+         * Return role information directly to LoginPage.
+         */
         return {
           ok: true,
           message:
             'تم تسجيل الدخول بنجاح',
+          isAdmin: admin,
+          userType,
         }
       } catch (error) {
+        console.error(
+          'Login error:',
+          error,
+        )
+
         const message =
           authErrorMessage(error)
 
@@ -1339,7 +1466,7 @@ export function StoreProvider({
       email: string
       phone: string
       password: string
-      type: 'client' | 'owner'
+      type: UserType
     }) => {
       try {
         const {
@@ -1429,27 +1556,20 @@ export function StoreProvider({
   /* Logout                                                                   */
   /* ------------------------------------------------------------------------ */
 
-  const logout =
-    useCallback(async () => {
-      const { error } =
-        await supabase.auth.signOut()
+  const logout = async () => {
+  try {
+    await supabase.auth.signOut()
+  } catch (error) {
+    console.error('Logout error:', error)
+  } finally {
+    setUser(null)
+  }
 
-      if (error) {
-        console.error(
-          'Logout error:',
-          error,
-        )
-        return
-      }
-
-      setUser(null)
-      setIsAdmin(false)
-      setFavorites([])
-      setPendingSalons([])
-    }, [])
+  window.location.href = '/'
+}
 
   /* ------------------------------------------------------------------------ */
-  /* Create booking                                                           */
+  /* Create booking                                                            */
   /* ------------------------------------------------------------------------ */
 
   const createBooking =
@@ -1513,10 +1633,13 @@ export function StoreProvider({
 
           const bookingPayload = {
             code: bookingCode,
+
             salon_id:
               input.salonId,
+
             salon_name:
               input.salonName,
+
             services:
               input.services.map(
                 (service) => ({
@@ -1527,23 +1650,35 @@ export function StoreProvider({
                     service.duration,
                 }),
               ),
+
             barber_name:
               input.barberName,
+
             date: input.date,
+
             time: input.time,
+
             client_name:
               input.clientName,
+
             phone: input.phone,
+
             email: input.email,
+
             notes: input.notes,
+
             total_price:
               totalPrice,
+
             discount,
+
             promo_code:
               input.promoCode ||
               null,
+
             user_id:
               authUser?.id ?? null,
+
             status: 'مؤكد',
           }
 
@@ -1611,7 +1746,7 @@ export function StoreProvider({
     )
 
   /* ------------------------------------------------------------------------ */
-  /* Cancel booking                                                           */
+  /* Cancel booking                                                            */
   /* ------------------------------------------------------------------------ */
 
   const cancelBooking =
@@ -1714,7 +1849,7 @@ export function StoreProvider({
     )
 
   /* ------------------------------------------------------------------------ */
-  /* Update booking status                                                    */
+  /* Update booking status                                                     */
   /* ------------------------------------------------------------------------ */
 
   const updateBookingStatus =
@@ -1789,7 +1924,7 @@ export function StoreProvider({
     updateBookingStatus
 
   /* ------------------------------------------------------------------------ */
-  /* Owner salon                                                              */
+  /* Owner salon                                                               */
   /* ------------------------------------------------------------------------ */
 
   const setOwnerSalon =
@@ -1815,6 +1950,7 @@ export function StoreProvider({
             'Set owner salon error:',
             error,
           )
+
           return
         }
 
@@ -1832,7 +1968,7 @@ export function StoreProvider({
     )
 
   /* ------------------------------------------------------------------------ */
-  /* Favorites                                                                */
+  /* Favorites                                                                 */
   /* ------------------------------------------------------------------------ */
 
   const toggleFavorite =
@@ -1845,6 +1981,7 @@ export function StoreProvider({
             'يرجى تسجيل الدخول لإضافة الصالون إلى المفضلة',
             'info',
           )
+
           return
         }
 
@@ -1872,6 +2009,7 @@ export function StoreProvider({
               'Remove favorite error:',
               error,
             )
+
             return
           }
 
@@ -1896,6 +2034,7 @@ export function StoreProvider({
               'Add favorite error:',
               error,
             )
+
             return
           }
 
@@ -1924,7 +2063,7 @@ export function StoreProvider({
     )
 
   /* ------------------------------------------------------------------------ */
-  /* Derived bookings                                                         */
+  /* Derived bookings                                                          */
   /* ------------------------------------------------------------------------ */
 
   const myBookings =
@@ -1938,7 +2077,10 @@ export function StoreProvider({
             user,
           ),
       )
-    }, [allBookings, user])
+    }, [
+      allBookings,
+      user,
+    ])
 
   const ownerSalonBookings =
     useMemo(() => {
@@ -1951,7 +2093,10 @@ export function StoreProvider({
           booking.salonId ===
           user.salonId,
       )
-    }, [allBookings, user])
+    }, [
+      allBookings,
+      user,
+    ])
 
   const bookings = myBookings
 
@@ -1959,7 +2104,7 @@ export function StoreProvider({
     ownerSalonBookings
 
   /* ------------------------------------------------------------------------ */
-  /* Store value                                                              */
+  /* Store value                                                               */
   /* ------------------------------------------------------------------------ */
 
   const value =
@@ -1971,7 +2116,6 @@ export function StoreProvider({
 
         pendingSalons,
         loadPendingSalons,
-
         approveSalon,
         rejectSalon,
 
@@ -1984,6 +2128,7 @@ export function StoreProvider({
         ownerSalonBookings,
 
         favorites,
+
         toasts,
 
         login,
@@ -2014,7 +2159,6 @@ export function StoreProvider({
 
         pendingSalons,
         loadPendingSalons,
-
         approveSalon,
         rejectSalon,
 
@@ -2027,6 +2171,7 @@ export function StoreProvider({
         ownerSalonBookings,
 
         favorites,
+
         toasts,
 
         login,
@@ -2053,7 +2198,9 @@ export function StoreProvider({
     )
 
   return (
-    <StoreContext.Provider value={value}>
+    <StoreContext.Provider
+      value={value}
+    >
       {children}
     </StoreContext.Provider>
   )

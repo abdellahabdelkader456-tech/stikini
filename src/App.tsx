@@ -1,8 +1,13 @@
-import { useEffect } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { Routes, Route, useLocation, Navigate } from 'react-router-dom'
+
 import { Navbar, Footer } from './components/Layout'
 import { Toaster } from './components/Toaster'
 import { useStore } from './lib/store'
+
+import AdminRoute from './components/AdminRoute'
+import AdminAccountPage from './pages/AdminAccountPage'
+
 import HomePage from './pages/HomePage'
 import SalonsPage from './pages/SalonsPage'
 import SalonDetailPage from './pages/SalonDetailPage'
@@ -22,14 +27,20 @@ import AdminSalonsPage from './pages/AdminSalonsPage'
 
 function ScrollToTop() {
   const { pathname } = useLocation()
+
   useEffect(() => {
-    window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior })
+    window.scrollTo({
+      top: 0,
+      behavior: 'instant' as ScrollBehavior,
+    })
   }, [pathname])
+
   return null
 }
 
-function RequireAuth({ children }: { children: React.ReactNode }) {
+function RequireAuth({ children }: { children: ReactNode }) {
   const { user, isReady } = useStore()
+
   if (!isReady) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center pt-[110px]">
@@ -37,7 +48,11 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
       </div>
     )
   }
-  if (!user) return <Navigate to="/login" replace />
+
+  if (!user) {
+    return <Navigate to="/login" replace />
+  }
+
   return <>{children}</>
 }
 
@@ -45,30 +60,77 @@ export default function App() {
   return (
     <div className="min-h-screen bg-forest text-cream font-body">
       <ScrollToTop />
+
       <Navbar />
+
       <main>
         <Routes>
+          {/* Public routes */}
           <Route path="/" element={<HomePage />} />
+
           <Route path="/salons" element={<SalonsPage />} />
-          <Route path="/salon/:slug" element={<SalonDetailPage />} />
-          <Route path="/booking/:slug" element={<BookingPage />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
+
           <Route
-  path="/register-salon"
-  element={
-    <RequireAuth>
-      <RegisterSalonPage />
-    </RequireAuth>
-  }
-/>
+            path="/salon/:slug"
+            element={<SalonDetailPage />}
+          />
+
+          <Route
+            path="/booking/:slug"
+            element={<BookingPage />}
+          />
+
+          <Route
+            path="/login"
+            element={<LoginPage />}
+          />
+
+          <Route
+            path="/register"
+            element={<RegisterPage />}
+          />
+
+          <Route
+            path="/pricing"
+            element={<PricingPage />}
+          />
+
+          <Route
+            path="/faq"
+            element={<FaqPage />}
+          />
+
+          <Route
+            path="/contact"
+            element={<ContactPage />}
+          />
+
+          <Route
+            path="/privacy"
+            element={<PrivacyPage />}
+          />
+
+          <Route
+            path="/terms"
+            element={<TermsPage />}
+          />
+
+          {/* Authenticated routes */}
+          <Route
+            path="/register-salon"
+            element={
+              <RequireAuth>
+                <RegisterSalonPage />
+              </RequireAuth>
+            }
+          />
 
 <Route
-  path="/admin/salons"
+  path="/admin/account"
   element={
-    <RequireAuth>
-      <AdminSalonsPage />
-    </RequireAuth>
+    <AdminRoute>
+      <AdminAccountPage />
+    </AdminRoute>
   }
 />
 
@@ -80,6 +142,7 @@ export default function App() {
               </RequireAuth>
             }
           />
+
           <Route
             path="/crm"
             element={
@@ -88,15 +151,27 @@ export default function App() {
               </RequireAuth>
             }
           />
-          <Route path="/pricing" element={<PricingPage />} />
-          <Route path="/faq" element={<FaqPage />} />
-          <Route path="/contact" element={<ContactPage />} />
-          <Route path="/privacy" element={<PrivacyPage />} />
-          <Route path="/terms" element={<TermsPage />} />
-          <Route path="*" element={<NotFoundPage />} />
+
+          {/* Admin-only routes */}
+          <Route
+            path="/admin/salons"
+            element={
+              <AdminRoute>
+                <AdminSalonsPage />
+              </AdminRoute>
+            }
+          />
+
+          {/* 404 */}
+          <Route
+            path="*"
+            element={<NotFoundPage />}
+          />
         </Routes>
       </main>
+
       <Footer />
+
       <Toaster />
     </div>
   )

@@ -99,12 +99,9 @@ interface StoreValue {
   allBookings: Booking[]
   bookings: Booking[]
   myBookings: Booking[]
-  sharedHistoricalBookings: Booking[]
-refreshSharedHistoricalBookings: () => Promise<void>
   salonBookings: Booking[]
   ownerSalonBookings: Booking[]
 
-  
   favorites: string[]
 
   toasts: ToastItem[]
@@ -573,9 +570,6 @@ export function StoreProvider({
 
   const [allBookings, setAllBookings] =
     useState<Booking[]>([])
-
-const [sharedHistoricalBookings, setSharedHistoricalBookings] =
-  useState<Booking[]>([])
 
   const [favorites, setFavorites] =
     useState<string[]>([])
@@ -1250,26 +1244,6 @@ const [sharedHistoricalBookings, setSharedHistoricalBookings] =
       }
     }, [])
 
-const refreshSharedHistoricalBookings = useCallback(async () => {
-  try {
-    const { data, error } = await supabase
-      .from('client_shared_booking_history')
-      .select('*')
-      .order('date', { ascending: false })
-      .order('time', { ascending: false })
-
-    if (error) {
-      console.error('Shared booking history error:', error)
-      return
-    }
-
-    setSharedHistoricalBookings((data ?? []).map(mapBooking))
-  } catch (error) {
-    console.error('Unexpected shared history error:', error)
-  }
-}, [])
-
-
   /* ------------------------------------------------------------------------ */
   /* Initialize                                                               */
   /* ------------------------------------------------------------------------ */
@@ -1283,7 +1257,6 @@ const refreshSharedHistoricalBookings = useCallback(async () => {
           await loadSalons()
           await loadUserData()
           await refreshPublicBookings()
-          await refreshSharedHistoricalBookings()
         } catch (error) {
           console.error(
             'Store initialization error:',
@@ -1313,7 +1286,6 @@ const refreshSharedHistoricalBookings = useCallback(async () => {
             setIsAdmin(false)
             setFavorites([])
             setPendingSalons([])
-            setSharedHistoricalBookings([])
             return
           }
 
@@ -1336,7 +1308,6 @@ const refreshSharedHistoricalBookings = useCallback(async () => {
     loadSalons,
     loadUserData,
     refreshPublicBookings,
-    refreshSharedHistoricalBookings,
   ])
 
   /* ------------------------------------------------------------------------ */
@@ -1585,21 +1556,18 @@ const refreshSharedHistoricalBookings = useCallback(async () => {
   /* Logout                                                                   */
   /* ------------------------------------------------------------------------ */
 
- const logout = async () => {
+  const logout = async () => {
   try {
     await supabase.auth.signOut()
   } catch (error) {
     console.error('Logout error:', error)
   } finally {
     setUser(null)
-    setIsAdmin(false)
-    setFavorites([])
-    setPendingSalons([])
-    setSharedHistoricalBookings([])
   }
 
   window.location.href = '/'
 }
+
   /* ------------------------------------------------------------------------ */
   /* Create booking                                                            */
   /* ------------------------------------------------------------------------ */
@@ -2094,116 +2062,148 @@ const refreshSharedHistoricalBookings = useCallback(async () => {
       [favorites],
     )
 
-
   /* ------------------------------------------------------------------------ */
-  /* Derived bookings                                                        */
+  /* Derived bookings                                                          */
   /* ------------------------------------------------------------------------ */
 
-  const myBookings = useMemo(() => {
-    if (!user) return []
+  const myBookings =
+    useMemo(() => {
+      if (!user) return []
 
-    return allBookings.filter((booking) =>
-      ownsBooking(booking, user),
-    )
-  }, [allBookings, user])
+      return allBookings.filter(
+        (booking) =>
+          ownsBooking(
+            booking,
+            user,
+          ),
+      )
+    }, [
+      allBookings,
+      user,
+    ])
 
-  const ownerSalonBookings = useMemo(() => {
-    if (!user?.salonId) return []
+  const ownerSalonBookings =
+    useMemo(() => {
+      if (!user?.salonId) {
+        return []
+      }
 
-    return allBookings.filter(
-      (booking) => booking.salonId === user.salonId,
-    )
-  }, [allBookings, user])
+      return allBookings.filter(
+        (booking) =>
+          booking.salonId ===
+          user.salonId,
+      )
+    }, [
+      allBookings,
+      user,
+    ])
 
   const bookings = myBookings
-  const salonBookings = ownerSalonBookings
+
+  const salonBookings =
+    ownerSalonBookings
 
   /* ------------------------------------------------------------------------ */
-  /* Store value                                                              */
+  /* Store value                                                               */
   /* ------------------------------------------------------------------------ */
 
-  const value = useMemo<StoreValue>(
-    () => ({
-      user,
-      isReady,
-      isAdmin,
-      pendingSalons,
-      loadPendingSalons,
-      approveSalon,
-      rejectSalon,
-      salons,
-      allBookings,
-      bookings,
-      myBookings,
+  const value =
+    useMemo<StoreValue>(
+      () => ({
+        user,
+        isReady,
+        isAdmin,
 
-      // NEW: Shared historical bookings
-      sharedHistoricalBookings,
-      refreshSharedHistoricalBookings,
+        pendingSalons,
+        loadPendingSalons,
+        approveSalon,
+        rejectSalon,
 
-      salonBookings,
-      ownerSalonBookings,
-      favorites,
-      toasts,
-      login,
-      register,
-      logout,
-      createBooking,
-      cancelBooking,
-      updateBookingStatus,
-      updateSalonBookingStatus,
-      refreshPublicBookings,
-      setOwnerSalon,
-      toggleFavorite,
-      isFavorite,
-      showToast,
-      removeToast,
-      dismissToast,
-    }),
-    [
-      user,
-      isReady,
-      isAdmin,
-      pendingSalons,
-      loadPendingSalons,
-      approveSalon,
-      rejectSalon,
-      salons,
-      allBookings,
-      bookings,
-      myBookings,
+        salons,
 
-      // NEW: Dependencies for shared history
-      sharedHistoricalBookings,
-      refreshSharedHistoricalBookings,
+        allBookings,
+        bookings,
+        myBookings,
+        salonBookings,
+        ownerSalonBookings,
 
-      salonBookings,
-      ownerSalonBookings,
-      favorites,
-      toasts,
-      login,
-      register,
-      logout,
-      createBooking,
-      cancelBooking,
-      updateBookingStatus,
-      updateSalonBookingStatus,
-      refreshPublicBookings,
-      setOwnerSalon,
-      toggleFavorite,
-      isFavorite,
-      showToast,
-      removeToast,
-      dismissToast,
-    ],
-  )
+        favorites,
 
-  
-    return (
-    <StoreContext.Provider value={value}>
+        toasts,
+
+        login,
+        register,
+        logout,
+
+        createBooking,
+        cancelBooking,
+
+        updateBookingStatus,
+        updateSalonBookingStatus,
+
+        refreshPublicBookings,
+
+        setOwnerSalon,
+
+        toggleFavorite,
+        isFavorite,
+
+        showToast,
+        removeToast,
+        dismissToast,
+      }),
+      [
+        user,
+        isReady,
+        isAdmin,
+
+        pendingSalons,
+        loadPendingSalons,
+        approveSalon,
+        rejectSalon,
+
+        salons,
+
+        allBookings,
+        bookings,
+        myBookings,
+        salonBookings,
+        ownerSalonBookings,
+
+        favorites,
+
+        toasts,
+
+        login,
+        register,
+        logout,
+
+        createBooking,
+        cancelBooking,
+
+        updateBookingStatus,
+        updateSalonBookingStatus,
+
+        refreshPublicBookings,
+
+        setOwnerSalon,
+
+        toggleFavorite,
+        isFavorite,
+
+        showToast,
+        removeToast,
+        dismissToast,
+      ],
+    )
+
+  return (
+    <StoreContext.Provider
+      value={value}
+    >
       {children}
     </StoreContext.Provider>
   )
-
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2211,7 +2211,8 @@ const refreshSharedHistoricalBookings = useCallback(async () => {
 /* -------------------------------------------------------------------------- */
 
 export function useStore(): StoreValue {
-  const context = useContext(StoreContext)
+  const context =
+    useContext(StoreContext)
 
   if (!context) {
     throw new Error(

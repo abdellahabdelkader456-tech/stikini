@@ -991,158 +991,118 @@ export default function AdminSalonsPage() {
       }
     }
 
- 
-const handleDeletionDecision = async (
-  request: DeletionRequest,
-  status: 'approved' | 'rejected',
-) => {
-  if (request.status !== 'pending') {
-    window.alert('تمت مراجعة هذا الطلب مسبقًا.')
-    return
-  }
-
-  const confirmed = window.confirm(
-    status === 'approved'
-      ? 'تحذير: ستتم محاولة حذف حساب المستخدم وبيانات الصالون المرتبطة به. هل أنت متأكد؟'
-      : 'هل تريد رفض طلب حذف الحساب؟',
-  )
-
-  if (!confirmed) return
-
-  setProcessingRequest(request.id)
-
-  try {
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser()
-
-    if (userError || !user) {
-      window.alert('يجب تسجيل الدخول بحساب المدير.')
-      return
-    }
-
-    const note = adminNote.trim() || null
-    const reviewedAt = new Date().toISOString()
-
-    if (status === 'approved') {
-      // The Edge Function performs the privileged deletion.
-      const { data, error } = await supabase.functions.invoke(
-        'delete-account',
-        {
-          body: {
-            userId: request.user_id,
-            requestId: request.id,
-          },
-        },
+  const handleDeletionDecision =
+    async (
+      request: DeletionRequest,
+      status:
+        | 'approved'
+        | 'rejected',
+    ) => {
+      setProcessingRequest(
+        request.id,
       )
 
-      if (error) {
-        console.error('Delete account function error:', error)
-        window.alert(
-          `فشل حذف الحساب: ${error.message}. لم يتم تسجيل الموافقة في هذه الصفحة. راجع سجلات Edge Function قبل إعادة المحاولة.`,
-        )
-        return
-      }
+      try {
+        const {
+          data: {
+            user,
+          },
+          error:
+            userError,
+        } =
+          await supabase.auth.getUser()
 
-      if (data?.error) {
-        console.error('Delete account function returned an error:', data)
-        window.alert(`تعذر إكمال الحذف: ${data.error}`)
-        return
-      }
-
-      // The deployed function marks the request approved itself.
-      // Save the optional admin note separately, if provided.
-      if (note) {
-        const { error: noteError } = await supabase
-          .from('account_deletion_requests')
-          .update({ admin_note: note })
-          .eq('id', request.id)
-
-        if (noteError) {
-          console.error('Could not save admin note:', noteError)
+        if (
+          userError ||
+          !user
+        ) {
           window.alert(
-            'تم تنفيذ طلب الحذف، لكن تعذر حفظ ملاحظة المدير. تحقق من سجلات الدالة وحالة الطلب.',
+            'يجب تسجيل الدخول بحساب المدير.',
           )
-          await refreshAll()
+
           return
         }
+
+        const reviewedAt =
+          new Date().toISOString()
+
+        const { error } =
+          await supabase
+            .from(
+              'account_deletion_requests',
+            )
+            .update({
+              status,
+              admin_note:
+                adminNote.trim() ||
+                null,
+              reviewed_at:
+                reviewedAt,
+              reviewed_by:
+                user.id,
+            })
+            .eq(
+              'id',
+              request.id,
+            )
+
+        if (error) {
+          console.error(
+            'Error updating deletion request:',
+            error,
+          )
+
+          window.alert(
+            'حدث خطأ أثناء تحديث طلب حذف الحساب.',
+          )
+
+          return
+        }
+
+        const updatedRequest: DeletionRequest =
+          {
+            ...request,
+            status,
+            admin_note:
+              adminNote.trim() ||
+              null,
+            reviewed_at:
+              reviewedAt,
+            reviewed_by:
+              user.id,
+          }
+
+        setDeletionRequests(
+          (current) =>
+            current.map(
+              (item) =>
+                item.id ===
+                request.id
+                  ? updatedRequest
+                  : item,
+            ),
+        )
+
+        setSelectedDeletionRequest(
+          updatedRequest,
+        )
+
+        setAdminNote('')
+      } catch (error) {
+        console.error(
+          'Unexpected deletion decision error:',
+          error,
+        )
+
+        window.alert(
+          'حدث خطأ غير متوقع.',
+        )
+      } finally {
+        setProcessingRequest(
+          null,
+        )
       }
-
-      const updatedRequest: DeletionRequest = {
-        ...request,
-        status: 'approved',
-        admin_note: note,
-        reviewed_at: reviewedAt,
-        reviewed_by: user.id,
-      }
-
-      setDeletionRequests((current) =>
-        current.map((item) =>
-          item.id === request.id ? updatedRequest : item,
-        ),
-      )
-
-      setSelectedDeletionRequest(null)
-      setAdminNote('')
-
-      window.alert('تمت معالجة طلب حذف الحساب. تحقق من حالة الطلب في Supabase.')
-      await refreshAll()
-      return
     }
-
-    // Rejecting a request must not delete the account.
-    const { data, error } = await supabase
-      .from('account_deletion_requests')
-      .update({
-        status: 'rejected',
-        admin_note: note,
-        reviewed_at: reviewedAt,
-        reviewed_by: user.id,
-      })
-      .eq('id', request.id)
-      .eq('status', 'pending')
-      .select('id')
-
-    if (error) {
-      console.error('Error rejecting deletion request:', error)
-      window.alert('حدث خطأ أثناء رفض طلب حذف الحساب.')
-      return
-    }
-
-    if (!data || data.length === 0) {
-      window.alert('لم يتم تحديث الطلب. ربما تمت مراجعته بالفعل.')
-      await loadDeletionRequests()
-      return
-    }
-
-    const updatedRequest: DeletionRequest = {
-      ...request,
-      status: 'rejected',
-      admin_note: note,
-      reviewed_at: reviewedAt,
-      reviewed_by: user.id,
-    }
-
-    setDeletionRequests((current) =>
-      current.map((item) =>
-        item.id === request.id ? updatedRequest : item,
-      ),
-    )
-
-    setSelectedDeletionRequest(updatedRequest)
-    setAdminNote('')
-
-    window.alert('تم رفض طلب حذف الحساب.')
-  } catch (error) {
-    console.error('Unexpected deletion decision error:', error)
-    window.alert(
-      'حدث خطأ غير متوقع. تحقق من سجلات Edge Function قبل إعادة المحاولة.',
-    )
-  } finally {
-    setProcessingRequest(null)
-  }
-}
 
   return (
  <main
@@ -2254,7 +2214,7 @@ const handleDeletionDecision = async (
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-gold" />
 
                 <p className="text-xs leading-6 text-cream/45">
-               عند الموافقة، تستدعي المنصة دالة آمنة لمعالجة حذف الحساب والبيانات المرتبطة به. تحقق من حالة الطلب وسجلات الدالة عند حدوث خطأ.
+                  يتم هنا تسجيل قرار المدير فقط. حذف المستخدم من Supabase Auth لا يتم تلقائيًا من هذه الصفحة.
                 </p>
               </div>
             </div>

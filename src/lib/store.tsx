@@ -97,6 +97,7 @@ interface StoreValue {
   salons: Salon[]
 
   allBookings: Booking[]
+  upcomingBookings: Booking[]
   bookings: Booking[]
   myBookings: Booking[]
   salonBookings: Booking[]
@@ -569,6 +570,11 @@ export function StoreProvider({
     useState(false)
 
   const [allBookings, setAllBookings] =
+    useState<Booking[]>([])
+
+  // Safe, platform-wide list for the client dashboard overview.
+  // This comes from a database view that omits customer contact details.
+  const [upcomingBookings, setUpcomingBookings] =
     useState<Booking[]>([])
 
   const [favorites, setFavorites] =
@@ -1209,40 +1215,83 @@ export function StoreProvider({
   const refreshPublicBookings =
     useCallback(async () => {
       try {
+        // Private rows are still fetched from bookings under existing RLS,
+        // so customers can only manage their own bookings and owners theirs.
         const {
-          data,
-          error,
+          data: privateRows,
+          error: privateError,
         } = await supabase
           .from('bookings')
           .select('*')
-          .order(
-            'created_at',
-            {
-              ascending: false,
-            },
-          )
+          .order('created_at', { ascending: false })
 
-        if (error) {
-          console.error(
-            'Error loading bookings:',
-            error,
-          )
+        if (privateError) {
+          console.error('Error loading personal/salon bookings:', privateError)
+        } else {
+          setAllBookings((privateRows ?? []).map(mapBooking))
+        }
 
+        // Public overview list uses a restricted SQL view: no client name,
+        // phone, email, notes, or user_id is exposed to other customers.
+        const {
+          data: publicRows,
+          error: publicError,
+        } = await supabase
+          .from('public_upcoming_bookings')
+          .select('id, code, salon_id, salon_name, services, barber_name, date, time, total_price, discount, promo_code, status, created_at')
+          .order('date', { ascending: true })
+          .order('time', { ascending: true })
+
+        if (publicError) {
+          console.error('Error loading platform upcoming bookings:', publicError)
+          setUpcomingBookings([])
           return
         }
 
-        setAllBookings(
-          (data ?? []).map(
-            mapBooking,
-          ),
-        )
+        setUpcomingBookings((publicRows ?? []).map(mapBooking))
       } catch (error) {
-        console.error(
-          'Unexpected booking loading error:',
-          error,
-        )
+        console.error('Unexpected booking loading error:', error)
       }
     }, [])
+
+
+  /* ------------------------------------------------------------------------ */
+  /* Automatic booking updates                                                */
+  /* ------------------------------------------------------------------------ */
+
+  useEffect(() => {
+    // Load bookings immediately.
+    void refreshPublicBookings()
+
+    // Listen for changes in the bookings table.
+    const channel = supabase
+      .channel('platform-bookings-live')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'bookings',
+        },
+        () => {
+          // Refresh the public overview automatically.
+          void refreshPublicBookings()
+        },
+      )
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR') {
+          console.error(
+            'Realtime booking subscription failed.',
+          )
+        }
+      })
+
+    // Clean up the subscription when the component unmounts.
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [refreshPublicBookings])
+
 
   /* ------------------------------------------------------------------------ */
   /* Initialize                                                               */
@@ -2122,6 +2171,7 @@ export function StoreProvider({
         salons,
 
         allBookings,
+        upcomingBookings,
         bookings,
         myBookings,
         salonBookings,
@@ -2165,6 +2215,7 @@ export function StoreProvider({
         salons,
 
         allBookings,
+        upcomingBookings,
         bookings,
         myBookings,
         salonBookings,

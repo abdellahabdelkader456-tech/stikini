@@ -42,6 +42,7 @@ export default function DashboardPage() {
     user,
     bookings,
     allBookings,
+    upcomingBookings,
     favorites,
     cancelBooking,
     showToast,
@@ -465,11 +466,11 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                {allBookings.length > 0 ? (
+                {upcomingBookings.length > 0 ? (
                   <div className="space-y-4">
                     {(showAllUpcoming
-                      ? allBookings
-                      : allBookings.slice(0, 3)
+                      ? upcomingBookings
+                      : upcomingBookings.slice(0, 3)
                     ).map((booking, index) => (
                       <motion.div
                         key={booking.id}

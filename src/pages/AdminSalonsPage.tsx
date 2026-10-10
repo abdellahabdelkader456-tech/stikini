@@ -991,118 +991,141 @@ export default function AdminSalonsPage() {
       }
     }
 
-  const handleDeletionDecision =
-    async (
-      request: DeletionRequest,
-      status:
-        | 'approved'
-        | 'rejected',
-    ) => {
-      setProcessingRequest(
-        request.id,
-      )
+ 
+  const handleDeletionDecision = async (
+    request: DeletionRequest,
+    status: 'approved' | 'rejected',
+  ) => {
+    setProcessingRequest(request.id);
 
-      try {
-        const {
-          data: {
-            user,
-          },
-          error:
-            userError,
-        } =
-          await supabase.auth.getUser()
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
 
-        if (
-          userError ||
-          !user
-        ) {
-          window.alert(
-            'يجب تسجيل الدخول بحساب المدير.',
-          )
+      if (userError || !user) {
+        window.alert('يجب تسجيل الدخول بحساب المدير.');
+        return;
+      }
 
-          return
-        }
+      const note = adminNote.trim() || null;
 
-        const reviewedAt =
-          new Date().toISOString()
+      if (status === 'approved') {
+        const confirmed = window.confirm(
+          'هل أنت متأكد؟ سيتم حذف حساب المستخدم والصالونات التي يملكها وخدماتها وحلاقيها وصورها، بالإضافة إلى حجوزاته الشخصية. لن تُحذف حجوزات العملاء الآخرين.',
+        );
 
-        const { error } =
-          await supabase
-            .from(
-              'account_deletion_requests',
-            )
-            .update({
-              status,
-              admin_note:
-                adminNote.trim() ||
-                null,
-              reviewed_at:
-                reviewedAt,
-              reviewed_by:
-                user.id,
-            })
-            .eq(
-              'id',
-              request.id,
-            )
+        if (!confirmed) return;
+
+        const { data, error } =
+          await supabase.functions.invoke(
+            'process-account-deletion',
+            {
+              body: {
+                requestId: request.id,
+                adminNote: note,
+              },
+            },
+          );
 
         if (error) {
           console.error(
-            'Error updating deletion request:',
+            'Account deletion function error:',
             error,
-          )
+          );
 
           window.alert(
-            'حدث خطأ أثناء تحديث طلب حذف الحساب.',
-          )
-
-          return
+            'تعذر تنفيذ الحذف. تحقق من سجلات Edge Function.',
+          );
+          return;
         }
 
-        const updatedRequest: DeletionRequest =
-          {
-            ...request,
-            status,
-            admin_note:
-              adminNote.trim() ||
-              null,
-            reviewed_at:
-              reviewedAt,
-            reviewed_by:
-              user.id,
-          }
+        if (!data?.success) {
+          console.error(
+            'Account deletion was not completed:',
+            data,
+          );
 
-        setDeletionRequests(
-          (current) =>
-            current.map(
-              (item) =>
-                item.id ===
-                request.id
-                  ? updatedRequest
-                  : item,
-            ),
-        )
-
-        setSelectedDeletionRequest(
-          updatedRequest,
-        )
-
-        setAdminNote('')
-      } catch (error) {
-        console.error(
-          'Unexpected deletion decision error:',
-          error,
-        )
+          window.alert(
+            data?.error ||
+              'لم تكتمل عملية الحذف. لم يتم تأكيد نجاحها.',
+          );
+          return;
+        }
 
         window.alert(
-          'حدث خطأ غير متوقع.',
-        )
-      } finally {
-        setProcessingRequest(
-          null,
-        )
+          data.message ||
+            'تم حذف الحساب والصالون بنجاح.',
+        );
+
+        setSelectedDeletionRequest(null);
+        setAdminNote('');
+
+        await refreshAll();
+        return;
       }
+
+      // Rejection only: it does not delete the account or salon.
+      const reviewedAt = new Date().toISOString();
+
+      const { data, error } = await supabase
+        .from('account_deletion_requests')
+        .update({
+          status: 'rejected',
+          admin_note: note,
+          reviewed_at: reviewedAt,
+          reviewed_by: user.id,
+        })
+        .eq('id', request.id)
+        .eq('status', 'pending')
+        .select()
+        .maybeSingle();
+
+      if (error || !data) {
+        console.error(
+          'Reject deletion request error:',
+          error,
+        );
+
+        window.alert(
+          'تعذر رفض الطلب. ربما تمت مراجعته بالفعل.',
+        );
+        return;
+      }
+
+      setDeletionRequests((current) =>
+        current.map((item) =>
+          item.id === request.id
+            ? {
+                ...item,
+                status: 'rejected',
+                admin_note: note,
+                reviewed_at: reviewedAt,
+                reviewed_by: user.id,
+              }
+            : item,
+        ),
+      );
+
+      setSelectedDeletionRequest(null);
+      setAdminNote('');
+
+      window.alert('تم رفض طلب الحذف.');
+    } catch (error) {
+      console.error(
+        'Unexpected deletion decision error:',
+        error,
+      );
+
+      window.alert(
+        'حدث خطأ غير متوقع أثناء معالجة الطلب.',
+      );
+    } finally {
+      setProcessingRequest(null);
     }
+  };
+
 
   return (
  <main
@@ -2214,7 +2237,7 @@ export default function AdminSalonsPage() {
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-gold" />
 
                 <p className="text-xs leading-6 text-cream/45">
-                  يتم هنا تسجيل قرار المدير فقط. حذف المستخدم من Supabase Auth لا يتم تلقائيًا من هذه الصفحة.
+                الموافقة على الطلب تنفّذ عملية حذف الحساب والصالونات المملوكة له عبر الخادم. إذا فشلت العملية، ستظهر رسالة خطأ ولن يُعلن نجاح الحذف.
                 </p>
               </div>
             </div>

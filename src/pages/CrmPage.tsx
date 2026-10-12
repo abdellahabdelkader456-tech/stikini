@@ -12,6 +12,8 @@ import {
   Trash2,
   Users,
   X,
+  CheckCircle2,
+  Ban,
 } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { supabase } from '../lib/supabase'
@@ -87,7 +89,12 @@ function appointmentStatusClass(status: string | null) {
 }
 
 export default function CrmPage() {
-  const { user, isReady, showToast } = useStore()
+  const {
+  user,
+  isReady,
+  showToast,
+  updateBookingStatus,
+} = useStore()
 
   const [salon, setSalon] = useState<Salon | null>(null)
   const [services, setServices] = useState<Service[]>([])
@@ -100,6 +107,8 @@ export default function CrmPage() {
   const [saving, setSaving] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [barberImageFile, setBarberImageFile] = useState<File | null>(null)
+  const [updatingBookingId, setUpdatingBookingId] =
+  useState<string | null>(null)
   const [barberPreview, setBarberPreview] = useState('')
 
   const [serviceForm, setServiceForm] = useState({
@@ -206,6 +215,56 @@ export default function CrmPage() {
       setLoading(false)
     }
   }
+
+async function handleBookingStatusChange(
+  appointment: Appointment,
+  status: 'ملغى' | 'مكتمل',
+) {
+  if (updatingBookingId) return
+
+  if (appointment.status !== 'مؤكد') {
+    showToast(
+      'لا يمكن تحديث هذا الحجز. حدّث الصفحة وحاول مجددًا.',
+      'error',
+    )
+    return
+  }
+
+  setUpdatingBookingId(appointment.id)
+
+  try {
+    const result = await updateBookingStatus(
+      appointment.id,
+      status,
+    )
+
+    if (!result.ok) {
+      showToast(
+        result.message || 'تعذر تحديث الحجز',
+        'error',
+      )
+      return
+    }
+
+    setAppointments((current) =>
+      current.map((item) =>
+        item.id === appointment.id
+          ? { ...item, status }
+          : item,
+      ),
+    )
+
+   showToast(
+  result.message || 'تم تحديث حالة الحجز بنجاح',
+  'success',
+)
+  } catch (error) {
+    console.error('Booking status update error:', error)
+    showToast('حدث خطأ أثناء تحديث الحجز', 'error')
+  } finally {
+    setUpdatingBookingId(null)
+  }
+}
 
   async function addService(event: FormEvent) {
     event.preventDefault()
@@ -596,6 +655,41 @@ export default function CrmPage() {
                       </div>
                     </div>
                     {appointment.phone && <p className="mt-3 text-xs text-cream/45">هاتف العميل: {appointment.phone}</p>}
+                    {appointment.status === 'مؤكد' && (
+  <div className="mt-5 flex flex-wrap gap-3 border-t border-gold/10 pt-4">
+    <button
+      type="button"
+      onClick={() =>
+        void handleBookingStatusChange(appointment, 'مكتمل')
+      }
+      disabled={updatingBookingId === appointment.id}
+      className="inline-flex items-center gap-2 rounded-xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-2.5 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {updatingBookingId === appointment.id ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
+      ) : (
+        <CheckCircle2 className="h-4 w-4" />
+      )}
+      إكمال الحجز
+    </button>
+
+    <button
+      type="button"
+      onClick={() =>
+        void handleBookingStatusChange(appointment, 'ملغى')
+      }
+      disabled={updatingBookingId === appointment.id}
+      className="inline-flex items-center gap-2 rounded-xl border border-red-400/20 bg-red-500/10 px-4 py-2.5 text-sm font-semibold text-red-300 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {updatingBookingId === appointment.id ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
+      ) : (
+        <Ban className="h-4 w-4" />
+      )}
+      إلغاء الحجز
+    </button>
+  </div>
+)}
                   </article>
                 )
               })}

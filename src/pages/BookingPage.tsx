@@ -10,16 +10,14 @@ import {
   MapPin,
   Scissors,
   User,
-  Wallet,
   MessageCircle,
   AlertCircle,
   PartyPopper,
   Copy,
   Home,
   CalendarCheck,
-  Tag,
 } from 'lucide-react'
-import { SITE, PROMO_CODES, calcPromoDiscount } from '../lib/data'
+import { SITE } from '../lib/data'
 import { useStore } from '../lib/store'
 import {
   cn,
@@ -51,11 +49,10 @@ const {
   createBooking,
   user,
   showToast,
-  allBookings,
+  publicUpcomingBookings,
 } = useStore()
 
 const salon = salons.find((s) => s.slug === slug)
-
 
   const [step, setStep] = useState(0)
   const [selectedServices, setSelectedServices] = useState<string[]>([])
@@ -66,9 +63,6 @@ const salon = salons.find((s) => s.slug === slug)
   const [phone, setPhone] = useState(user?.phone ?? '')
   const [email, setEmail] = useState(user?.email ?? '')
   const [notes, setNotes] = useState('')
-  const [promoInput, setPromoInput] = useState('')
-  const [appliedPromo, setAppliedPromo] = useState('')
-  const [promoError, setPromoError] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
   const [confirmedBooking, setConfirmedBooking] = useState<Booking | null>(null)
@@ -79,7 +73,7 @@ const salon = salons.find((s) => s.slug === slug)
   const bookedTimesForSelection = useMemo(() => {
     if (!salon || !selectedBarber || !date) return new Set<string>()
     return new Set(
-      allBookings
+      publicUpcomingBookings
         .filter(
           (b) =>
             b.salonId === salon.id &&
@@ -89,7 +83,7 @@ const salon = salons.find((s) => s.slug === slug)
         )
         .map((b) => b.time),
     )
-  }, [allBookings, salon, selectedBarber, date])
+  }, [publicUpcomingBookings, salon, selectedBarber, date])
 
   useEffect(() => {
     if (time && bookedTimesForSelection.has(time)) {
@@ -104,35 +98,11 @@ const salon = salons.find((s) => s.slug === slug)
   )
 
   const subtotalPrice = chosenServices.reduce((sum, s) => sum + s.price, 0)
-  const discountAmount = calcPromoDiscount(appliedPromo, subtotalPrice)
-  const totalPrice = subtotalPrice - discountAmount
+  const totalPrice = subtotalPrice
   const totalDuration = chosenServices.reduce((sum, s) => sum + s.duration, 0)
 
   if (!salon) {
     return <Navigate to="/salons" replace />
-  }
-
-  const applyPromo = () => {
-    const code = promoInput.trim().toUpperCase()
-    if (!code) {
-      setPromoError('يرجى إدخال كود الخصم')
-      return
-    }
-    if (!PROMO_CODES[code]) {
-      setAppliedPromo('')
-      setPromoError('كود الخصم غير صحيح')
-      return
-    }
-    setAppliedPromo(code)
-    setPromoInput(code)
-    setPromoError('')
-    showToast(`تم تطبيق كود الخصم ${code} (${PROMO_CODES[code].label})`, 'success')
-  }
-
-  const removePromo = () => {
-    setAppliedPromo('')
-    setPromoInput('')
-    setPromoError('')
   }
 
   const toggleService = (id: string) => {
@@ -201,7 +171,6 @@ const salon = salons.find((s) => s.slug === slug)
       phone: phone.trim(),
       email: email.trim(),
       notes: notes.trim(),
-      promoCode: appliedPromo || undefined,
     })
 
     setSubmitting(false)
@@ -329,18 +298,6 @@ const salon = salons.find((s) => s.slug === slug)
                     ))}
                   </div>
                 </div>
-
-                {confirmedBooking.discount > 0 && (
-                  <div className="mb-5 flex items-center justify-between gap-3 py-2.5 px-4 rounded-xl bg-emerald-brand/8 border border-emerald-brand/18">
-                    <span className="flex items-center gap-2 text-emerald-brand text-[12px] font-bold">
-                      <Tag className="w-3.5 h-3.5" />
-                      كود الخصم {confirmedBooking.promoCode}
-                    </span>
-                    <span className="text-emerald-brand text-[12.5px] font-black" dir="ltr">
-                      -{formatPrice(confirmedBooking.discount)} دج
-                    </span>
-                  </div>
-                )}
 
                 <div className="pt-5 border-t border-gold/16 flex items-center justify-between">
                   <div>
@@ -823,57 +780,6 @@ const salon = salons.find((s) => s.slug === slug)
                           />
                         </div>
 
-                        <div className="sm:col-span-2">
-                          <label className="block text-cream/62 text-[12px] font-semibold mb-2.5">
-                            كود الخصم (اختياري)
-                          </label>
-                          <div className="flex items-stretch gap-3">
-                            <div className="relative flex-1">
-                              <Tag className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gold/52 pointer-events-none" />
-                              <input
-                                type="text"
-                                value={promoInput}
-                                onChange={(e) => {
-                                  setPromoInput(e.target.value)
-                                  setPromoError('')
-                                }}
-                                placeholder="مثال: MAISON10"
-                                className={cn('field pr-11', promoError && 'border-red-400/52')}
-                                dir="ltr"
-                                disabled={!!appliedPromo}
-                              />
-                            </div>
-                            {appliedPromo ? (
-                              <button
-                                type="button"
-                                onClick={removePromo}
-                                className="px-6 rounded-2xl border border-red-400/24 text-red-300/88 text-[12px] font-bold hover:bg-red-500/12 transition-all"
-                              >
-                                إزالة
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={applyPromo}
-                                className="px-6 rounded-2xl bg-gold/12 border border-gold/24 text-gold text-[12px] font-bold hover:bg-gold hover:text-ink transition-all"
-                              >
-                                تطبيق
-                              </button>
-                            )}
-                          </div>
-                          {promoError && (
-                            <p className="mt-2 flex items-center gap-1.5 text-red-300/88 text-[10.5px]">
-                              <AlertCircle className="w-3 h-3" />
-                              {promoError}
-                            </p>
-                          )}
-                          {appliedPromo && (
-                            <p className="mt-2 flex items-center gap-1.5 text-emerald-brand text-[10.5px] font-semibold">
-                              <CheckCircle2 className="w-3 h-3" />
-                              تم تطبيق الكود {appliedPromo} — {PROMO_CODES[appliedPromo].label}
-                            </p>
-                          )}
-                        </div>
                       </div>
 
                       {/* Privacy note */}
@@ -1034,17 +940,7 @@ const salon = salons.find((s) => s.slug === slug)
 
                     {/* Total */}
                     <div className="mt-6 pt-5 border-t border-gold/16">
-                      {discountAmount > 0 && (
-                        <div className="mb-4 flex items-center justify-between gap-3 py-2 px-3.5 rounded-xl bg-emerald-brand/8 border border-emerald-brand/18">
-                          <span className="flex items-center gap-2 text-emerald-brand text-[11px] font-bold">
-                            <Tag className="w-3.5 h-3.5" />
-                            {appliedPromo}
-                          </span>
-                          <span className="text-emerald-brand text-[11.5px] font-black" dir="ltr">
-                            -{formatPrice(discountAmount)} دج
-                          </span>
-                        </div>
-                      )}
+
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-cream/48 text-[11px] font-semibold">

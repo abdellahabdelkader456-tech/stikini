@@ -300,24 +300,22 @@ export default function RegisterSalonPage() {
         facebook: step4.facebook.trim() || null,
         whatsapp: step4.whatsapp.trim() || null,
         opening_hours: openingHoursForDatabase(),
-        status: 'pending',
       })
 
       if (salonError) {
         throw salonError
       }
 
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update({
-          type: 'owner',
-          salon_id: salonId,
-        })
-        .eq('id', user.id)
+      const { error: profileError } = await supabase.rpc(
+  'complete_salon_registration',
+  {
+    p_salon_id: salonId,
+  },
+)
 
-      if (profileError) {
-        throw profileError
-      }
+if (profileError) {
+  throw profileError
+}
 
       // 4. Upload logo
       let logoUrl: string | null = null

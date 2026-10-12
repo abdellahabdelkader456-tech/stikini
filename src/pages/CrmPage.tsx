@@ -1,15 +1,8 @@
-import {
-  ChangeEvent,
-  FormEvent,
-  ReactNode,
-  useEffect,
-  useState,
-} from 'react'
-
+import { ChangeEvent, FormEvent, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-
 import {
   ArrowRight,
+  CalendarDays,
   Upload,
   BriefcaseBusiness,
   Loader2,
@@ -20,7 +13,6 @@ import {
   Users,
   X,
 } from 'lucide-react'
-
 import { useStore } from '../lib/store'
 import { supabase } from '../lib/supabase'
 
@@ -51,8 +43,47 @@ type Barber = {
   photo_url: string | null
 }
 
-function formatPrice(price: number) {
-  return `${Number(price || 0).toLocaleString('fr-DZ')} DA`
+type Appointment = {
+  id: string
+  code: string | null
+  salon_id: string | null
+  salon_name: string | null
+  services: Array<{ id?: string; name?: string; price?: number; duration?: number }>
+  barber_name: string | null
+  date: string | null
+  time: string | null
+  client_name: string | null
+  phone: string | null
+  total_price: number
+  status: string | null
+}
+
+function formatAppointmentDate(date: string | null) {
+  if (!date) return 'التاريخ غير محدد'
+  const parsed = new Date(`${date}T00:00:00`)
+  if (Number.isNaN(parsed.getTime())) return date
+  return new Intl.DateTimeFormat('ar-DZ', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(parsed)
+}
+
+function appointmentStatusClass(status: string | null) {
+  switch (status) {
+    case 'مؤكد':
+    case 'confirmed':
+      return 'border-emerald-400/20 bg-emerald-500/10 text-emerald-300'
+    case 'ملغى':
+    case 'cancelled':
+    case 'canceled':
+      return 'border-red-400/20 bg-red-500/10 text-red-300'
+    case 'مكتمل':
+    case 'completed':
+      return 'border-sky-400/20 bg-sky-500/10 text-sky-300'
+    default:
+      return 'border-gold/20 bg-gold/10 text-gold'
+  }
 }
 
 export default function CrmPage() {
@@ -61,15 +92,13 @@ export default function CrmPage() {
   const [salon, setSalon] = useState<Salon | null>(null)
   const [services, setServices] = useState<Service[]>([])
   const [barbers, setBarbers] = useState<Barber[]>([])
-
+  const [appointments, setAppointments] = useState<Appointment[]>([])
   const [loading, setLoading] = useState(true)
 
   const [serviceModal, setServiceModal] = useState(false)
   const [barberModal, setBarberModal] = useState(false)
-
   const [saving, setSaving] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
-
   const [barberImageFile, setBarberImageFile] = useState<File | null>(null)
   const [barberPreview, setBarberPreview] = useState('')
 
@@ -83,19 +112,20 @@ export default function CrmPage() {
 
   const [barberForm, setBarberForm] = useState({
     name: '',
-    experience: '',
+    experience: '0',
     specialties: '',
+    photo_url: '',
   })
 
   useEffect(() => {
-    if (!isReady) return
+    if (!isReady || !user) return
 
-    if (!user) {
+    if (user.type !== 'owner') {
       setLoading(false)
       return
     }
 
-    loadCrm()
+    void loadCrm()
   }, [isReady, user])
 
   async function loadCrm() {
@@ -104,82 +134,74 @@ export default function CrmPage() {
     setLoading(true)
 
     try {
-      const { data: salonData, error: salonError } = await supabase
+      // IMPORTANT:
+      // The owner is identified by profiles.id -> salons.owner_id.
+      // We do not trust a salon id coming from the URL.
+      const { data: salonRow, error: salonError } = await supabase
         .from('salons')
-        .select(
-          'id,name,address,wilaya,commune,category,status',
-        )
+        .select('id,name,address,wilaya,commune,category,status')
         .eq('owner_id', user.id)
         .maybeSingle()
 
-      if (salonError) {
-        throw salonError
-      }
+      if (salonError) throw salonError
 
-      setSalon(salonData)
-
-      if (!salonData) {
+      if (!salonRow) {
+        setSalon(null)
         setServices([])
         setBarbers([])
+        setAppointments([])
         return
       }
 
-      const [servicesResult, barbersResult] =
-        await Promise.all([
-          supabase
-            .from('salon_services')
-            .select(
-              'id,name,description,category,price,duration',
-            )
-            .eq('salon_id', salonData.id)
-            .order('name', { ascending: true }),
+      setSalon(salonRow as Salon)
 
-          supabase
-            .from('salon_barbers')
-            .select(
-              'id,name,experience,specialties,photo_url',
-            )
-            .eq('salon_id', salonData.id)
-            .order('name', { ascending: true }),
-        ])
+      const [servicesResult, barbersResult, appointmentsResult] = await Promise.all([
+        supabase
+          .from('salon_services')
+          .select('id,name,description,category,price,duration')
+          .eq('salon_id', salonRow.id)
+          .order('name'),
 
-      if (servicesResult.error) {
-        throw servicesResult.error
-      }
+        supabase
+          .from('salon_barbers')
+          .select('id,name,experience,specialties,photo_url')
+          .eq('salon_id', salonRow.id)
+          .order('name'),
 
-      if (barbersResult.error) {
-        throw barbersResult.error
-      }
+        // Select the existing booking row shape to avoid assuming optional columns.
+        supabase
+          .from('bookings')
+          .select('*')
+          .eq('salon_id', salonRow.id)
+          .order('date', { ascending: true })
+          .order('time', { ascending: true }),
+      ])
 
-      setServices(
-        (servicesResult.data ?? []).map((service) => ({
-          id: String(service.id),
-          name: service.name ?? '',
-          description: service.description ?? null,
-          category: service.category ?? null,
-          price: Number(service.price ?? 0),
-          duration: Number(service.duration ?? 30),
-        })),
-      )
+      if (servicesResult.error) throw servicesResult.error
+      if (barbersResult.error) throw barbersResult.error
+      if (appointmentsResult.error) throw appointmentsResult.error
 
-      setBarbers(
-        (barbersResult.data ?? []).map((barber) => ({
-          id: String(barber.id),
-          name: barber.name ?? '',
-          experience: Number(barber.experience ?? 0),
-          specialties: Array.isArray(barber.specialties)
-            ? barber.specialties
-            : [],
-          photo_url: barber.photo_url ?? null,
+      setServices((servicesResult.data ?? []) as Service[])
+      setBarbers((barbersResult.data ?? []) as Barber[])
+      setAppointments(
+        (appointmentsResult.data ?? []).map((row: any) => ({
+          id: String(row.id),
+          code: row.code ?? null,
+          salon_id: row.salon_id ?? null,
+          salon_name: row.salon_name ?? null,
+          services: Array.isArray(row.services) ? row.services : [],
+          barber_name: row.barber_name ?? null,
+          date: row.date ?? null,
+          time: row.time ?? null,
+          client_name: row.client_name ?? null,
+          phone: row.phone ?? null,
+          total_price: Number(row.total_price ?? 0),
+          status: row.status ?? null,
         })),
       )
     } catch (error) {
       console.error('CRM loading error:', error)
-
-      showToast(
-        'تعذر تحميل بيانات إدارة الصالون',
-        'error',
-      )
+      showToast('تعذر تحميل بيانات الصالون', 'error')
     } finally {
       setLoading(false)
     }
@@ -188,26 +210,23 @@ export default function CrmPage() {
   async function addService(event: FormEvent) {
     event.preventDefault()
 
-    if (!user || !salon) return
+    if (!salon) return
 
-    const name = serviceForm.name.trim()
-    const description = serviceForm.description.trim()
-    const category = serviceForm.category.trim()
     const price = Number(serviceForm.price)
     const duration = Number(serviceForm.duration)
 
-    if (!name) {
-      showToast('يرجى إدخال اسم الخدمة', 'error')
+    if (!serviceForm.name.trim()) {
+      showToast('أدخل اسم الخدمة', 'error')
       return
     }
 
-    if (Number.isNaN(price) || price < 0) {
-      showToast('يرجى إدخال سعر صحيح', 'error')
+    if (!Number.isFinite(price) || price < 0) {
+      showToast('أدخل سعراً صحيحاً', 'error')
       return
     }
 
-    if (Number.isNaN(duration) || duration <= 0) {
-      showToast('يرجى إدخال مدة صحيحة', 'error')
+    if (!Number.isFinite(duration) || duration <= 0) {
+      showToast('أدخل مدة صحيحة', 'error')
       return
     }
 
@@ -218,34 +237,20 @@ export default function CrmPage() {
         .from('salon_services')
         .insert({
           salon_id: salon.id,
-          name,
-          description: description || null,
-          category: category || null,
+          name: serviceForm.name.trim(),
+          description: serviceForm.description.trim() || null,
+          category: serviceForm.category.trim() || null,
           price,
           duration,
         })
-        .select(
-          'id,name,description,category,price,duration',
-        )
+        .select('id,name,description,category,price,duration')
         .single()
 
-      if (error) {
-        throw error
-      }
+      if (error) throw error
 
-      if (data) {
-        setServices((current) => [
-          ...current,
-          {
-            id: String(data.id),
-            name: data.name ?? '',
-            description: data.description ?? null,
-            category: data.category ?? null,
-            price: Number(data.price ?? 0),
-            duration: Number(data.duration ?? 30),
-          },
-        ])
-      }
+      setServices((current) => [...current, data as Service].sort((a, b) =>
+        a.name.localeCompare(b.name, 'ar'),
+      ))
 
       setServiceForm({
         name: '',
@@ -254,116 +259,64 @@ export default function CrmPage() {
         price: '',
         duration: '30',
       })
-
       setServiceModal(false)
-
       showToast('تمت إضافة الخدمة بنجاح', 'success')
     } catch (error) {
       console.error('Add service error:', error)
-
-      showToast(
-        'تعذر إضافة الخدمة',
-        'error',
-      )
+      showToast('تعذر إضافة الخدمة', 'error')
     } finally {
       setSaving(false)
-    }
-  }
-
-  async function deleteService(serviceId: string) {
-    if (!salon) return
-
-    const confirmed = window.confirm(
-      'هل أنت متأكد من حذف هذه الخدمة؟',
-    )
-
-    if (!confirmed) return
-
-    setDeletingId(serviceId)
-
-    try {
-      const { error } = await supabase
-        .from('salon_services')
-        .delete()
-        .eq('id', serviceId)
-        .eq('salon_id', salon.id)
-
-      if (error) {
-        throw error
-      }
-
-      setServices((current) =>
-        current.filter((service) => service.id !== serviceId),
-      )
-
-      showToast('تم حذف الخدمة بنجاح', 'success')
-    } catch (error) {
-      console.error('Delete service error:', error)
-
-      showToast(
-        'تعذر حذف الخدمة',
-        'error',
-      )
-    } finally {
-      setDeletingId(null)
     }
   }
 
   async function addBarber(event: FormEvent) {
     event.preventDefault()
 
-    if (!user || !salon) return
+    if (!salon) return
 
-    const name = barberForm.name.trim()
     const experience = Number(barberForm.experience)
+
+    if (!barberForm.name.trim()) {
+      showToast('أدخل اسم الحلاق', 'error')
+      return
+    }
+
+    if (!Number.isFinite(experience) || experience < 0) {
+      showToast('أدخل سنوات خبرة صحيحة', 'error')
+      return
+    }
 
     const specialties = barberForm.specialties
       .split(',')
       .map((item) => item.trim())
       .filter(Boolean)
 
-    if (!name) {
-      showToast('يرجى إدخال اسم الحلاق', 'error')
-      return
-    }
-
-    if (
-      Number.isNaN(experience) ||
-      experience < 0
-    ) {
-      showToast(
-        'يرجى إدخال سنوات خبرة صحيحة',
-        'error',
-      )
-      return
-    }
-
     setSaving(true)
 
+    let uploadedPath: string | null = null
+
     try {
-      let photoUrl: string | null = null
+      let photoUrl = barberForm.photo_url.trim() || null
 
+      // If the owner selected a real image file, upload it to Supabase Storage first.
       if (barberImageFile) {
-        const extension =
-          barberImageFile.name.split('.').pop() || 'jpg'
+        const extension = barberImageFile.name.split('.').pop()?.toLowerCase() || 'jpg'
+        const safeExtension = extension.replace(/[^a-z0-9]/g, '') || 'jpg'
+        uploadedPath = `${salon.id}/${crypto.randomUUID()}.${safeExtension}`
 
-        const filePath = `barbers/${salon.id}/${crypto.randomUUID()}.${extension}`
+        const { error: uploadError } = await supabase.storage
+          .from('salon-images')
+          .upload(uploadedPath, barberImageFile, {
+            cacheControl: '3600',
+            upsert: false,
+            contentType: barberImageFile.type,
+          })
 
-        const { error: uploadError } =
-          await supabase.storage
-            .from('salon-images')
-            .upload(filePath, barberImageFile, {
-              upsert: false,
-            })
+        if (uploadError) throw uploadError
 
-        if (uploadError) {
-          throw uploadError
-        }
-
-        const { data: publicUrlData } =
-          supabase.storage
-            .from('salon-images')
-            .getPublicUrl(filePath)
+        const { data: publicUrlData } = supabase.storage
+          .from('salon-images')
+          .getPublicUrl(uploadedPath)
 
         photoUrl = publicUrlData.publicUrl
       }
@@ -372,159 +325,109 @@ export default function CrmPage() {
         .from('salon_barbers')
         .insert({
           salon_id: salon.id,
-          name,
+          name: barberForm.name.trim(),
           experience,
           specialties,
           photo_url: photoUrl,
         })
-        .select(
-          'id,name,experience,specialties,photo_url',
-        )
+        .select('id,name,experience,specialties,photo_url')
         .single()
 
-      if (error) {
-        throw error
-      }
+      if (error) throw error
 
-      if (data) {
-        setBarbers((current) => [
-          ...current,
-          {
-            id: String(data.id),
-            name: data.name ?? '',
-            experience: Number(data.experience ?? 0),
-            specialties: Array.isArray(data.specialties)
-              ? data.specialties
-              : [],
-            photo_url: data.photo_url ?? null,
-          },
-        ])
-      }
+      setBarbers((current) => [...current, data as Barber].sort((a, b) =>
+        a.name.localeCompare(b.name, 'ar'),
+      ))
 
       setBarberForm({
         name: '',
-        experience: '',
+        experience: '0',
         specialties: '',
+        photo_url: '',
       })
-
       setBarberImageFile(null)
       setBarberPreview('')
       setBarberModal(false)
-
-      showToast(
-        'تمت إضافة الحلاق بنجاح',
-        'success',
-      )
+      showToast('تمت إضافة الحلاق بنجاح', 'success')
     } catch (error) {
+      // Do not leave an orphaned Storage file if the database insert fails.
+      if (uploadedPath) {
+        await supabase.storage.from('salon-images').remove([uploadedPath])
+      }
       console.error('Add barber error:', error)
-
-      showToast(
-        'تعذر إضافة الحلاق',
-        'error',
-      )
+      showToast('تعذر إضافة الحلاق أو رفع الصورة', 'error')
     } finally {
       setSaving(false)
     }
   }
 
-  async function deleteBarber(barberId: string) {
-    if (!salon) return
+  async function deleteService(id: string) {
+    if (!confirm('هل تريد حذف هذه الخدمة؟')) return
 
-    const confirmed = window.confirm(
-      'هل أنت متأكد من حذف هذا الحلاق؟',
-    )
-
-    if (!confirmed) return
-
-    setDeletingId(barberId)
+    setDeletingId(id)
 
     try {
       const { error } = await supabase
-        .from('salon_barbers')
+        .from('salon_services')
         .delete()
-        .eq('id', barberId)
-        .eq('salon_id', salon.id)
+        .eq('id', id)
+        .eq('salon_id', salon?.id ?? '')
 
-      if (error) {
-        throw error
-      }
+      if (error) throw error
 
-      setBarbers((current) =>
-        current.filter((barber) => barber.id !== barberId),
-      )
-
-      showToast(
-        'تم حذف الحلاق بنجاح',
-        'success',
-      )
+      setServices((current) => current.filter((item) => item.id !== id))
+      showToast('تم حذف الخدمة', 'success')
     } catch (error) {
-      console.error('Delete barber error:', error)
-
-      showToast(
-        'تعذر حذف الحلاق',
-        'error',
-      )
+      console.error('Delete service error:', error)
+      showToast('تعذر حذف الخدمة', 'error')
     } finally {
       setDeletingId(null)
     }
   }
 
-  function handleBarberImage(
-    event: ChangeEvent<HTMLInputElement>,
-  ) {
-    const file = event.target.files?.[0]
+  async function deleteBarber(id: string) {
+    if (!confirm('هل تريد حذف هذا الحلاق؟')) return
 
-    if (!file) return
+    setDeletingId(id)
 
-    if (!file.type.startsWith('image/')) {
-      showToast(
-        'يرجى اختيار صورة صحيحة',
-        'error',
-      )
-      return
+    try {
+      const { error } = await supabase
+        .from('salon_barbers')
+        .delete()
+        .eq('id', id)
+        .eq('salon_id', salon?.id ?? '')
+
+      if (error) throw error
+
+      setBarbers((current) => current.filter((item) => item.id !== id))
+      showToast('تم حذف الحلاق', 'success')
+    } catch (error) {
+      console.error('Delete barber error:', error)
+      showToast('تعذر حذف الحلاق', 'error')
+    } finally {
+      setDeletingId(null)
     }
-
-    setBarberImageFile(file)
-
-    const previewUrl = URL.createObjectURL(file)
-    setBarberPreview(previewUrl)
   }
 
   if (!isReady || loading) {
     return (
-      <div className="min-h-screen bg-ink flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="w-8 h-8 text-gold animate-spin" />
-
-          <p className="text-cream/55 text-sm">
-            جاري تحميل لوحة إدارة الصالون...
-          </p>
-        </div>
+      <div dir="rtl" className="min-h-screen bg-ink flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-gold" />
       </div>
     )
   }
 
   if (!user) {
     return (
-      <div
-        className="min-h-screen bg-ink flex items-center justify-center px-5"
-        dir="rtl"
-      >
-        <div className="glass-panel rounded-[24px] p-8 max-w-md w-full text-center">
-          <h1 className="text-cream text-xl font-black">
-            يجب تسجيل الدخول
-          </h1>
-
-          <p className="mt-3 text-cream/45 text-sm">
-            قم بتسجيل الدخول للوصول إلى إدارة الصالون.
-          </p>
-
+      <div dir="rtl" className="min-h-screen bg-ink flex items-center justify-center p-6">
+        <div className="glass-panel rounded-3xl shadow-sm border border-gold/10 p-8 text-center max-w-md w-full">
+          <h1 className="text-2xl font-bold text-cream mb-3">تسجيل الدخول مطلوب</h1>
+          <p className="text-cream/60 mb-6">يجب تسجيل الدخول للوصول إلى إدارة الصالون.</p>
           <Link
             to="/login"
-            className="btn-gold mt-6 inline-flex items-center gap-2 px-6 py-3 rounded-2xl text-sm"
+            className="inline-flex items-center justify-center rounded-xl bg-gold px-5 py-3 text-white font-semibold"
           >
             تسجيل الدخول
-            <ArrowRight className="w-4 h-4" />
           </Link>
         </div>
       </div>
@@ -533,30 +436,11 @@ export default function CrmPage() {
 
   if (user.type !== 'owner') {
     return (
-      <div
-        className="min-h-screen bg-ink flex items-center justify-center px-5"
-        dir="rtl"
-      >
-        <div className="glass-panel rounded-[24px] p-8 max-w-md w-full text-center">
-          <div className="w-14 h-14 mx-auto rounded-2xl bg-red-500/10 border border-red-400/20 flex items-center justify-center">
-            <X className="w-6 h-6 text-red-300" />
-          </div>
-
-          <h1 className="mt-5 text-cream text-xl font-black">
-            غير مسموح بالدخول
-          </h1>
-
-          <p className="mt-3 text-cream/45 text-sm leading-relaxed">
-            هذه الصفحة مخصصة لأصحاب الصالونات فقط.
-          </p>
-
-          <Link
-            to="/dashboard"
-            className="btn-outline mt-6 inline-flex items-center gap-2 px-6 py-3 rounded-2xl text-sm"
-          >
-            العودة إلى الحساب
-            <ArrowRight className="w-4 h-4" />
-          </Link>
+      <div dir="rtl" className="min-h-screen bg-ink flex items-center justify-center p-6">
+        <div className="glass-panel rounded-3xl shadow-sm border border-gold/10 p-8 text-center max-w-md w-full">
+          <h1 className="text-2xl font-bold text-cream mb-3">غير مصرح</h1>
+          <p className="text-cream/60 mb-6">هذه الصفحة مخصصة لأصحاب الصالونات.</p>
+          <Link to="/" className="text-gold font-semibold">العودة للرئيسية</Link>
         </div>
       </div>
     )
@@ -564,670 +448,450 @@ export default function CrmPage() {
 
   if (!salon) {
     return (
-      <div
-        className="min-h-screen bg-ink pt-[150px] pb-20 px-5"
-        dir="rtl"
-      >
-        <div className="max-w-3xl mx-auto">
-          <div className="glass-panel rounded-[28px] p-8 sm:p-10 text-center">
-            <div className="w-16 h-16 mx-auto rounded-2xl bg-gold/10 border border-gold/20 flex items-center justify-center">
-              <BriefcaseBusiness className="w-7 h-7 text-gold" />
-            </div>
-
-            <h1 className="mt-6 text-2xl font-black text-cream">
-              لا يوجد صالون مرتبط بحسابك
-            </h1>
-
-            <p className="mt-3 text-cream/45 text-sm leading-relaxed max-w-xl mx-auto">
-              سجّل صالونك أولاً حتى تتمكن من إدارة الخدمات
-              والحلاقين ومعلومات الصالون من لوحة التحكم.
-            </p>
-
-            <Link
-              to="/register-salon"
-              className="btn-gold mt-7 inline-flex items-center gap-2.5 px-7 py-3.5 rounded-2xl text-sm"
-            >
-              تسجيل صالون
-              <ArrowRight className="w-4 h-4" />
-            </Link>
-          </div>
+      <div dir="rtl" className="min-h-screen bg-ink flex items-center justify-center p-6">
+        <div className="glass-panel rounded-3xl shadow-sm border border-gold/10 p-8 text-center max-w-lg w-full">
+          <BriefcaseBusiness className="w-12 h-12 mx-auto text-gold mb-4" />
+          <h1 className="text-2xl font-bold text-cream mb-3">لا يوجد صالون مرتبط بحسابك</h1>
+          <p className="text-cream/60 mb-6">
+            سجّل صالونك أولاً، وبعد ربطه بحسابك ستتمكن من إدارة الحلاقين والخدمات.
+          </p>
+          <Link
+            to="/register-salon"
+            className="inline-flex items-center gap-2 rounded-xl bg-gold px-5 py-3 text-white font-semibold"
+          >
+            تسجيل صالون
+            <ArrowRight className="w-4 h-4" />
+          </Link>
         </div>
       </div>
     )
   }
 
   return (
-    <div
-      className="min-h-screen bg-ink pt-[130px] pb-20"
-      dir="rtl"
-    >
-      <div className="max-w-7xl mx-auto px-5 sm:px-6">
-        {/* Header */}
-        <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
+    <div dir="rtl" className="min-h-screen bg-ink text-cream pt-24">
+      <header className="relative z-10 bg-ink/95 backdrop-blur-xl border-b border-gold/10 shadow-lg">
+        <div className="max-w-7xl mx-auto px-5 py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
-            <Link
-              to="/dashboard"
-              className="inline-flex items-center gap-2 text-cream/45 hover:text-gold text-[11px] font-semibold transition-colors"
-            >
-              <ArrowRight className="w-3.5 h-3.5" />
-              العودة إلى لوحة الحساب
-            </Link>
-
-            <div className="mt-5 flex items-center gap-3">
-              <span className="w-11 h-11 rounded-2xl bg-gold/10 border border-gold/20 flex items-center justify-center">
-                <BriefcaseBusiness className="w-5 h-5 text-gold" />
+            <div className="flex items-center gap-2 text-sm text-cream/60 mb-1">
+              <Link to="/dashboard" className="hover:text-gold">لوحة التحكم</Link>
+              <ArrowRight className="w-4 h-4" />
+              <span>إدارة الصالون</span>
+            </div>
+            <h1 className="text-2xl font-bold text-cream">{salon.name}</h1>
+            <div className="flex flex-wrap items-center gap-3 text-sm text-cream/60 mt-2">
+              {(salon.commune || salon.wilaya) && (
+                <span className="inline-flex items-center gap-1">
+                  <MapPin className="w-4 h-4" />
+                  {[salon.commune, salon.wilaya].filter(Boolean).join('، ')}
+                </span>
+              )}
+              {salon.category && <span>{salon.category}</span>}
+              <span className={`font-semibold ${
+                salon.status === 'approved' ? 'text-emerald-600' : 'text-amber-600'
+              }`}>
+                {salon.status === 'approved' ? 'معتمد' : 'قيد المراجعة'}
               </span>
+            </div>
+          </div>
+          <Link
+            to="/dashboard"
+            className="inline-flex items-center gap-2 rounded-xl border border-gold/30 bg-gold/10 px-4 py-2.5 text-gold font-semibold hover:bg-gold/20 transition-colors cursor-pointer shrink-0"
+          >
+            <ArrowRight className="w-4 h-4" />
+            العودة
+          </Link>
+        </div>
+      </header>
 
+      <main className="max-w-7xl mx-auto px-5 py-8 space-y-8">
+        <section className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          <div className="glass-panel rounded-2xl border border-gold/10 p-5">
+            <div className="flex items-center justify-between">
               <div>
-                <p className="text-gold text-[10px] font-bold">
-                  STIKINI CRM
-                </p>
-
-                <h1 className="mt-1 text-3xl sm:text-4xl font-black text-cream">
-                  إدارة الصالون
-                </h1>
+                <p className="text-cream/60 text-sm">الخدمات</p>
+                <p className="text-3xl font-bold text-cream mt-1">{services.length}</p>
+              </div>
+              <div className="p-3 rounded-xl bg-gold/10 text-gold">
+                <Scissors className="w-6 h-6" />
               </div>
             </div>
-
-            <p className="mt-4 text-cream/45 text-sm leading-relaxed">
-              أدر خدمات الصالون والحلاقين ومعلوماته من مكان واحد.
-            </p>
           </div>
 
-          <div className="glass-panel rounded-2xl px-5 py-4 min-w-[260px]">
-            <p className="text-cream/35 text-[10px] font-semibold">
-              الصالون الحالي
-            </p>
-
-            <h2 className="mt-1.5 text-cream font-black text-[15px]">
-              {salon.name}
-            </h2>
-
-            <div className="mt-2 flex items-center gap-1.5 text-cream/45 text-[10px]">
-              <MapPin className="w-3 h-3 text-gold" />
-
-              {salon.commune || salon.wilaya || 'الموقع غير محدد'}
+          <div className="glass-panel rounded-2xl border border-gold/10 p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-cream/60 text-sm">الحلاقون</p>
+                <p className="text-3xl font-bold text-cream mt-1">{barbers.length}</p>
+              </div>
+              <div className="p-3 rounded-xl bg-gold/10 text-gold">
+                <Users className="w-6 h-6" />
+              </div>
             </div>
           </div>
-        </div>
+        </section>
 
-        {/* Salon information */}
-        <section className="mt-10">
-          <div className="flex items-center justify-between gap-4 mb-5">
+        <section className="glass-panel rounded-3xl border border-gold/10 overflow-hidden">
+          <div className="p-6 border-b border-gold/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h2 className="text-xl font-black text-cream">
-                معلومات الصالون
+              <h2 className="flex items-center gap-2 text-xl font-bold text-cream">
+                <CalendarDays className="w-5 h-5 text-gold" />
+                المواعيد
               </h2>
-
-              <p className="mt-1.5 text-cream/38 text-[11px]">
-                المعلومات الأساسية الخاصة بالصالون.
-              </p>
+              <p className="text-sm text-cream/60 mt-1">جميع الحجوزات المرتبطة بصفحتك، مرتبة حسب التاريخ والوقت.</p>
             </div>
-
-            <span className="px-3 py-1.5 rounded-full bg-gold/10 border border-gold/20 text-gold text-[10px] font-bold">
-              {salon.status || 'قيد المراجعة'}
+            <span className="inline-flex items-center gap-2 rounded-xl border border-gold/20 bg-gold/10 px-4 py-2.5 text-sm font-bold text-gold">
+              <CalendarDays className="w-4 h-4" />
+              {appointments.length} موعد
             </span>
           </div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <InfoCard
-              icon={<Scissors className="w-4 h-4" />}
-              label="اسم الصالون"
-              value={salon.name}
-            />
-
-            <InfoCard
-              icon={<MapPin className="w-4 h-4" />}
-              label="الولاية"
-              value={salon.wilaya || 'غير محددة'}
-            />
-
-            <InfoCard
-              icon={<MapPin className="w-4 h-4" />}
-              label="البلدية"
-              value={salon.commune || 'غير محددة'}
-            />
-
-            <InfoCard
-              icon={<BriefcaseBusiness className="w-4 h-4" />}
-              label="التصنيف"
-              value={salon.category || 'غير محدد'}
-            />
-          </div>
-        </section>
-
-        {/* Statistics */}
-        <section className="mt-10 grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard
-            icon={<Scissors className="w-5 h-5" />}
-            label="الخدمات"
-            value={services.length}
-          />
-
-          <StatCard
-            icon={<Users className="w-5 h-5" />}
-            label="الحلاقون"
-            value={barbers.length}
-          />
-
-          <StatCard
-            icon={<BriefcaseBusiness className="w-5 h-5" />}
-            label="حالة الصالون"
-            value={salon.status || 'غير محدد'}
-          />
-
-          <StatCard
-            icon={<MapPin className="w-5 h-5" />}
-            label="الموقع"
-            value={salon.wilaya || 'غير محدد'}
-          />
-        </section>
-
-        {/* Services */}
-        <section className="mt-12">
-          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
-            <div>
-              <h2 className="text-xl font-black text-cream">
-                الخدمات
-              </h2>
-
-              <p className="mt-1.5 text-cream/38 text-[11px]">
-                أضف وعدّل الخدمات والأسعار والمدة.
-              </p>
+          {appointments.length === 0 ? (
+            <div className="p-10 text-center">
+              <CalendarDays className="mx-auto mb-3 h-8 w-8 text-gold/70" />
+              <p className="font-bold text-cream">لا توجد مواعيد بعد</p>
+              <p className="mt-2 text-sm text-cream/50">ستظهر هنا حجوزات العملاء المرتبطة بهذا الصالون.</p>
             </div>
+          ) : (
+            <div className="divide-y divide-white/5">
+              {appointments.map((appointment) => {
+                const serviceNames = appointment.services
+                  .map((service) => typeof service === 'string' ? service : service.name || '')
+                  .filter(Boolean)
+                  .join('، ')
 
+                return (
+                  <article key={appointment.id} className="p-5 sm:p-6">
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-gold/20 bg-gold/10 text-gold">
+                          <CalendarDays className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-cream">{appointment.client_name || 'عميل'}</h3>
+                          {appointment.code && <p className="mt-1 text-xs text-cream/40">رقم الحجز: {appointment.code}</p>}
+                          <p className="mt-2 text-sm text-cream/70">{serviceNames || 'خدمة غير محددة'}</p>
+                        </div>
+                      </div>
+                      <span className={`self-start rounded-full border px-3 py-1.5 text-xs font-semibold ${appointmentStatusClass(appointment.status)}`}>
+                        {appointment.status || 'قيد الانتظار'}
+                      </span>
+                    </div>
+
+                    <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                      <div className="rounded-xl border border-white/5 bg-white/[0.03] p-3">
+                        <p className="text-xs text-cream/40">التاريخ</p>
+                        <p className="mt-1.5 text-sm font-semibold text-cream">{formatAppointmentDate(appointment.date)}</p>
+                      </div>
+                      <div className="rounded-xl border border-white/5 bg-white/[0.03] p-3">
+                        <p className="text-xs text-cream/40">الوقت</p>
+                        <p className="mt-1.5 text-sm font-semibold text-cream">{appointment.time || 'غير محدد'}</p>
+                      </div>
+                      <div className="rounded-xl border border-white/5 bg-white/[0.03] p-3">
+                        <p className="text-xs text-cream/40">الحلاق</p>
+                        <p className="mt-1.5 text-sm font-semibold text-cream">{appointment.barber_name || 'غير محدد'}</p>
+                      </div>
+                      <div className="rounded-xl border border-white/5 bg-white/[0.03] p-3">
+                        <p className="text-xs text-cream/40">المبلغ</p>
+                        <p className="mt-1.5 text-sm font-bold text-gold">{appointment.total_price.toLocaleString('fr-DZ')} دج</p>
+                      </div>
+                    </div>
+                    {appointment.phone && <p className="mt-3 text-xs text-cream/45">هاتف العميل: {appointment.phone}</p>}
+                  </article>
+                )
+              })}
+            </div>
+          )}
+        </section>
+
+        <section className="glass-panel rounded-3xl border border-gold/10 overflow-hidden">
+          <div className="p-6 border-b border-gold/10 flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-bold text-cream">الخدمات</h2>
+              <p className="text-sm text-cream/60 mt-1">أضف الخدمات والأسعار التي يقدمها صالونك.</p>
+            </div>
             <button
-              type="button"
               onClick={() => setServiceModal(true)}
-              className="btn-gold inline-flex items-center justify-center gap-2 px-5 py-3 rounded-2xl text-[12px]"
+              className="inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2.5 text-white font-semibold hover:bg-gold/90"
             >
               <Plus className="w-4 h-4" />
               إضافة خدمة
             </button>
           </div>
 
-          {services.length > 0 ? (
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {services.length === 0 ? (
+            <div className="p-10 text-center text-cream/60">لم تتم إضافة أي خدمة بعد.</div>
+          ) : (
+            <div className="divide-y divide-slate-100">
               {services.map((service) => (
-                <div
-                  key={service.id}
-                  className="glass-panel rounded-[22px] p-5"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="w-11 h-11 rounded-2xl bg-gold/10 border border-gold/20 flex items-center justify-center shrink-0">
-                      <Scissors className="w-5 h-5 text-gold" />
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        deleteService(service.id)
-                      }
-                      disabled={deletingId === service.id}
-                      className="w-9 h-9 rounded-xl border border-red-400/15 text-red-300/70 flex items-center justify-center hover:bg-red-500/10 hover:text-red-300 transition-all disabled:opacity-50"
-                      title="حذف الخدمة"
-                    >
-                      {deletingId === service.id ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <Trash2 className="w-3.5 h-3.5" />
-                      )}
-                    </button>
-                  </div>
-
-                  <h3 className="mt-5 text-cream font-black text-[15px]">
-                    {service.name}
-                  </h3>
-
-                  {service.category && (
-                    <span className="inline-flex mt-2 px-2.5 py-1 rounded-full bg-gold/8 border border-gold/15 text-gold text-[9px] font-bold">
-                      {service.category}
-                    </span>
-                  )}
-
-                  {service.description && (
-                    <p className="mt-3 text-cream/42 text-[10.5px] leading-relaxed">
-                      {service.description}
+                <div key={service.id} className="p-5 flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <h3 className="font-bold text-cream">{service.name}</h3>
+                    <p className="text-sm text-cream/60 mt-1">
+                      {[service.category, service.duration ? `${service.duration} دقيقة` : null]
+                        .filter(Boolean)
+                        .join(' • ')}
                     </p>
-                  )}
-
-                  <div className="mt-5 pt-4 border-t border-white/7 flex items-center justify-between gap-4">
-                    <div>
-                      <p className="text-cream/30 text-[9px]">
-                        السعر
-                      </p>
-
-                      <p className="mt-1 text-gold font-black text-[16px]">
-                        {formatPrice(service.price)} دج
-                      </p>
-                    </div>
-
-                    <div className="text-left">
-                      <p className="text-cream/30 text-[9px]">
-                        المدة
-                      </p>
-
-                      <p className="mt-1 text-cream/70 text-[12px] font-bold">
-                        {service.duration} دقيقة
-                      </p>
-                    </div>
+                    {service.description && (
+                      <p className="text-sm text-slate-400 mt-1">{service.description}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-4 shrink-0">
+                    <span className="font-bold text-gold">
+                      {service.price.toLocaleString('fr-DZ')} دج
+                    </span>
+                    <button
+                      onClick={() => void deleteService(service.id)}
+                      disabled={deletingId === service.id}
+                      className="p-2 rounded-lg text-red-500 hover:bg-red-50 disabled:opacity-50"
+                      aria-label="حذف الخدمة"
+                    >
+                      {deletingId === service.id
+                        ? <Loader2 className="w-4 h-4 animate-spin" />
+                        : <Trash2 className="w-4 h-4" />}
+                    </button>
                   </div>
                 </div>
               ))}
             </div>
-          ) : (
-            <EmptyCrmState
-              icon={<Scissors className="w-6 h-6" />}
-              title="لا توجد خدمات بعد"
-              description="أضف أول خدمة ليتمكن الزبائن من رؤيتها عند الحجز."
-              action={
-                <button
-                  type="button"
-                  onClick={() => setServiceModal(true)}
-                  className="btn-gold inline-flex items-center gap-2 px-5 py-3 rounded-2xl text-[11px]"
-                >
-                  <Plus className="w-4 h-4" />
-                  إضافة أول خدمة
-                </button>
-              }
-            />
           )}
         </section>
 
-        {/* Barbers */}
-        <section className="mt-12">
-          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-6">
+        <section className="glass-panel rounded-3xl border border-gold/10 overflow-hidden">
+          <div className="p-6 border-b border-gold/10 flex items-center justify-between gap-4">
             <div>
-              <h2 className="text-xl font-black text-cream">
-                فريق العمل
-              </h2>
-
-              <p className="mt-1.5 text-cream/38 text-[11px]">
-                أدر الحلاقين والخبرات والتخصصات.
-              </p>
+              <h2 className="text-xl font-bold text-cream">الحلاقون</h2>
+              <p className="text-sm text-cream/60 mt-1">أدر فريق الحلاقين الخاص بصالونك.</p>
             </div>
-
             <button
-              type="button"
               onClick={() => setBarberModal(true)}
-              className="btn-gold inline-flex items-center justify-center gap-2 px-5 py-3 rounded-2xl text-[12px]"
+              className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-white font-semibold hover:bg-violet-700"
             >
               <Plus className="w-4 h-4" />
               إضافة حلاق
             </button>
           </div>
 
-          {barbers.length > 0 ? (
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {barbers.length === 0 ? (
+            <div className="p-10 text-center text-cream/60">لم تتم إضافة أي حلاق بعد.</div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-5">
               {barbers.map((barber) => (
-                <div
-                  key={barber.id}
-                  className="glass-panel rounded-[22px] p-5"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-14 h-14 rounded-2xl overflow-hidden bg-gold/10 border border-gold/20 flex items-center justify-center">
-                        {barber.photo_url ? (
-                          <img
-                            src={barber.photo_url}
-                            alt={barber.name}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <Users className="w-6 h-6 text-gold" />
-                        )}
-                      </div>
-
-                      <div>
-                        <h3 className="text-cream font-black text-[14px]">
-                          {barber.name}
-                        </h3>
-
-                        <p className="mt-1 text-cream/40 text-[10px]">
-                          {barber.experience} سنوات خبرة
-                        </p>
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        deleteBarber(barber.id)
-                      }
-                      disabled={deletingId === barber.id}
-                      className="w-9 h-9 rounded-xl border border-red-400/15 text-red-300/70 flex items-center justify-center hover:bg-red-500/10 hover:text-red-300 transition-all disabled:opacity-50"
-                      title="حذف الحلاق"
-                    >
-                      {deletingId === barber.id ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <Trash2 className="w-3.5 h-3.5" />
-                      )}
-                    </button>
-                  </div>
-
-                  {barber.specialties.length > 0 && (
-                    <div className="mt-5 flex flex-wrap gap-2">
-                      {barber.specialties.map(
-                        (specialty) => (
-                          <span
-                            key={specialty}
-                            className="px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/8 text-cream/55 text-[9.5px] font-semibold"
-                          >
-                            {specialty}
-                          </span>
-                        ),
-                      )}
+                <div key={barber.id} className="border border-gold/10 rounded-2xl p-4 flex items-center gap-4">
+                  {barber.photo_url ? (
+                    <img
+                      src={barber.photo_url}
+                      alt={barber.name}
+                      className="w-16 h-16 rounded-xl object-cover"
+                    />
+                  ) : (
+                    <div className="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400">
+                      <Users className="w-7 h-7" />
                     </div>
                   )}
+
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-bold text-cream">{barber.name}</h3>
+                    <p className="text-sm text-cream/60 mt-1">
+                      {barber.experience} سنوات خبرة
+                    </p>
+                    {barber.specialties.length > 0 && (
+                      <p className="text-xs text-slate-400 mt-1 truncate">
+                        {barber.specialties.join('، ')}
+                      </p>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={() => void deleteBarber(barber.id)}
+                    disabled={deletingId === barber.id}
+                    className="p-2 rounded-lg text-red-500 hover:bg-red-50 disabled:opacity-50"
+                    aria-label="حذف الحلاق"
+                  >
+                    {deletingId === barber.id
+                      ? <Loader2 className="w-4 h-4 animate-spin" />
+                      : <Trash2 className="w-4 h-4" />}
+                  </button>
                 </div>
               ))}
             </div>
-          ) : (
-            <EmptyCrmState
-              icon={<Users className="w-6 h-6" />}
-              title="لا يوجد حلاقون بعد"
-              description="أضف أعضاء فريقك ليظهروا للزبائن أثناء اختيار موعد الحجز."
-              action={
-                <button
-                  type="button"
-                  onClick={() => setBarberModal(true)}
-                  className="btn-gold inline-flex items-center gap-2 px-5 py-3 rounded-2xl text-[11px]"
-                >
-                  <Plus className="w-4 h-4" />
-                  إضافة أول حلاق
-                </button>
-              }
-            />
           )}
         </section>
-      </div>
+      </main>
 
-      {/* Service modal */}
       {serviceModal && (
-        <Modal
-          title="إضافة خدمة جديدة"
-          onClose={() => {
-            if (!saving) {
-              setServiceModal(false)
-            }
-          }}
-        >
-          <form
-            onSubmit={addService}
-            className="space-y-5"
-          >
+        <Modal title="إضافة خدمة" onClose={() => setServiceModal(false)}>
+          <form onSubmit={addService} className="space-y-4">
             <Input
               label="اسم الخدمة"
               value={serviceForm.name}
-              onChange={(value) =>
-                setServiceForm((current) => ({
-                  ...current,
-                  name: value,
-                }))
-              }
+              onChange={(value) => setServiceForm((f) => ({ ...f, name: value }))}
               placeholder="مثال: قص الشعر"
               required
             />
-
             <Input
-              label="التصنيف"
+              label="الفئة"
               value={serviceForm.category}
-              onChange={(value) =>
-                setServiceForm((current) => ({
-                  ...current,
-                  category: value,
-                }))
-              }
-              placeholder="مثال: حلاقة"
+              onChange={(value) => setServiceForm((f) => ({ ...f, category: value }))}
+              placeholder="مثال: شعر"
             />
-
-            <TextArea
-              label="الوصف"
-              value={serviceForm.description}
-              onChange={(value) =>
-                setServiceForm((current) => ({
-                  ...current,
-                  description: value,
-                }))
-              }
-              placeholder="وصف مختصر للخدمة..."
-            />
-
-            <div className="grid sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-3">
               <Input
-                label="السعر"
+                label="السعر (دج)"
                 type="number"
                 min="0"
                 value={serviceForm.price}
-                onChange={(value) =>
-                  setServiceForm((current) => ({
-                    ...current,
-                    price: value,
-                  }))
-                }
-                placeholder="مثال: 800"
+                onChange={(value) => setServiceForm((f) => ({ ...f, price: value }))}
+                placeholder="500"
                 required
               />
-
               <Input
-                label="المدة بالدقائق"
+                label="المدة (دقيقة)"
                 type="number"
                 min="1"
                 value={serviceForm.duration}
-                onChange={(value) =>
-                  setServiceForm((current) => ({
-                    ...current,
-                    duration: value,
-                  }))
-                }
+                onChange={(value) => setServiceForm((f) => ({ ...f, duration: value }))}
                 placeholder="30"
                 required
               />
             </div>
-
-            <SubmitButton
-              loading={saving}
-              label="إضافة الخدمة"
+            <TextArea
+              label="الوصف"
+              value={serviceForm.description}
+              onChange={(value) => setServiceForm((f) => ({ ...f, description: value }))}
+              placeholder="وصف مختصر للخدمة"
             />
+            <SubmitButton saving={saving} label="إضافة الخدمة" />
           </form>
         </Modal>
       )}
 
-      {/* Barber modal */}
       {barberModal && (
-        <Modal
-          title="إضافة حلاق"
-          onClose={() => {
-            if (!saving) {
-              setBarberModal(false)
-            }
-          }}
-        >
-          <form
-            onSubmit={addBarber}
-            className="space-y-5"
-          >
+        <Modal title="إضافة حلاق" onClose={() => setBarberModal(false)}>
+          <form onSubmit={addBarber} className="space-y-4">
             <Input
               label="اسم الحلاق"
               value={barberForm.name}
-              onChange={(value) =>
-                setBarberForm((current) => ({
-                  ...current,
-                  name: value,
-                }))
-              }
-              placeholder="مثال: محمد"
+              onChange={(value) => setBarberForm((f) => ({ ...f, name: value }))}
+              placeholder="مثال: ياسين"
               required
             />
-
             <Input
               label="سنوات الخبرة"
               type="number"
               min="0"
               value={barberForm.experience}
-              onChange={(value) =>
-                setBarberForm((current) => ({
-                  ...current,
-                  experience: value,
-                }))
-              }
-              placeholder="مثال: 5"
-              required
+              onChange={(value) => setBarberForm((f) => ({ ...f, experience: value }))}
+              placeholder="3"
             />
-
             <Input
               label="التخصصات"
               value={barberForm.specialties}
-              onChange={(value) =>
-                setBarberForm((current) => ({
-                  ...current,
-                  specialties: value,
-                }))
-              }
-              placeholder="قص الشعر، اللحية، التصفيف"
+              onChange={(value) => setBarberForm((f) => ({ ...f, specialties: value }))}
+              placeholder="قص الشعر، لحية، تدريج"
             />
-
             <BarberImageField
+              file={barberImageFile}
               preview={barberPreview}
-              onChange={handleBarberImage}
-              onRemove={() => {
-                setBarberImageFile(null)
-                setBarberPreview('')
+              onChange={(event) => {
+                const file = event.target.files?.[0] ?? null
+
+                if (!file) return
+
+                if (!file.type.startsWith('image/')) {
+                  showToast('اختر ملف صورة فقط', 'error')
+                  event.target.value = ''
+                  return
+                }
+
+                if (file.size > 5 * 1024 * 1024) {
+                  showToast('حجم الصورة يجب ألا يتجاوز 5MB', 'error')
+                  event.target.value = ''
+                  return
+                }
+
+                setBarberImageFile(file)
+                setBarberPreview(URL.createObjectURL(file))
               }}
             />
-
-            <SubmitButton
-              loading={saving}
-              label="إضافة الحلاق"
+            <Input
+              label="أو رابط صورة الحلاق"
+              value={barberForm.photo_url}
+              onChange={(value) => setBarberForm((f) => ({ ...f, photo_url: value }))}
+              placeholder="https://..."
             />
+            <SubmitButton saving={saving} label="إضافة الحلاق" />
           </form>
         </Modal>
       )}
-    </div>
-  )
-}
-
-function InfoCard({
-  icon,
-  label,
-  value,
-}: {
-  icon: ReactNode
-  label: string
-  value: string
-}) {
-  return (
-    <div className="glass-panel rounded-[20px] p-5">
-      <div className="w-10 h-10 rounded-xl bg-gold/10 border border-gold/18 flex items-center justify-center text-gold">
-        {icon}
-      </div>
-
-      <p className="mt-4 text-cream/32 text-[9px] font-semibold">
-        {label}
-      </p>
-
-      <p className="mt-1.5 text-cream text-[13px] font-bold">
-        {value}
-      </p>
-    </div>
-  )
-}
-
-function StatCard({
-  icon,
-  label,
-  value,
-}: {
-  icon: ReactNode
-  label: string
-  value: string | number
-}) {
-  return (
-    <div className="glass-panel rounded-[20px] p-5">
-      <div className="flex items-center justify-between gap-4">
-        <div className="w-11 h-11 rounded-2xl bg-gold/10 border border-gold/18 flex items-center justify-center text-gold">
-          {icon}
-        </div>
-
-        <span className="text-gold text-xl font-black">
-          {value}
-        </span>
-      </div>
-
-      <p className="mt-4 text-cream/42 text-[10px] font-semibold">
-        {label}
-      </p>
-    </div>
-  )
-}
-
-function EmptyCrmState({
-  icon,
-  title,
-  description,
-  action,
-}: {
-  icon: ReactNode
-  title: string
-  description: string
-  action?: ReactNode
-}) {
-  return (
-    <div className="glass-panel rounded-[24px] p-8 sm:p-10 text-center">
-      <div className="w-14 h-14 mx-auto rounded-2xl bg-gold/10 border border-gold/18 flex items-center justify-center text-gold">
-        {icon}
-      </div>
-
-      <h3 className="mt-5 text-cream text-[16px] font-black">
-        {title}
-      </h3>
-
-      <p className="mt-2 text-cream/40 text-[11px] leading-relaxed max-w-md mx-auto">
-        {description}
-      </p>
-
-      {action && <div className="mt-5">{action}</div>}
     </div>
   )
 }
 
 function Modal({
   title,
-  onClose,
   children,
+  onClose,
 }: {
   title: string
+  children: React.ReactNode
   onClose: () => void
-  children: ReactNode
 }) {
   return (
-    <div
-      className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-5"
-      dir="rtl"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
-          onClose()
-        }
-      }}
-    >
-      <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto glass-panel-strong rounded-[26px] border border-gold/12">
-        <div className="sticky top-0 z-10 px-7 py-6 border-b border-white/7 bg-ink/90 backdrop-blur-xl flex items-center justify-between gap-4">
-          <h2 className="text-cream text-[17px] font-black">
-            {title}
-          </h2>
-
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+      <div className="glass-panel rounded-3xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-xl">
+        <div className="p-5 border-b border-gold/10 flex items-center justify-between">
+          <h2 className="text-xl font-bold text-cream">{title}</h2>
           <button
-            type="button"
             onClick={onClose}
-            className="w-9 h-9 rounded-xl bg-white/5 border border-white/8 flex items-center justify-center text-cream/55 hover:text-cream hover:border-gold/20 transition-all"
+            className="p-2 rounded-lg hover:bg-slate-100 text-cream/60"
+            aria-label="إغلاق"
           >
-            <X className="w-4 h-4" />
+            <X className="w-5 h-5" />
           </button>
         </div>
-
-        <div className="px-7 py-7">{children}</div>
+        <div className="p-5">{children}</div>
       </div>
+    </div>
+  )
+}
+
+
+function BarberImageField({
+  file,
+  preview,
+  onChange,
+}: {
+  file: File | null
+  preview: string
+  onChange: (event: ChangeEvent<HTMLInputElement>) => void
+}) {
+  return (
+    <div>
+      <span className="block text-sm font-semibold text-cream mb-2">صورة الحلاق</span>
+      <label className="relative flex min-h-40 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-gold/10 bg-ink transition hover:border-gold/40 hover:bg-gold/5">
+        <input
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          onChange={onChange}
+          className="sr-only"
+        />
+        {preview ? (
+          <>
+            <img src={preview} alt="معاينة صورة الحلاق" className="absolute inset-0 h-full w-full object-cover" />
+            <div className="absolute inset-x-0 bottom-0 bg-black/60 px-4 py-2 text-center text-sm font-medium text-white">
+              {file?.name || 'اضغط لاختيار صورة أخرى'}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="mb-3 rounded-full bg-gold/10 p-3 text-gold">
+              <Upload className="h-6 w-6" />
+            </div>
+            <p className="font-semibold text-cream">أضف صورة الحلاق</p>
+            <p className="mt-1 text-xs text-cream/60">PNG, JPG, WEBP أو GIF — حتى 5MB</p>
+          </>
+        )}
+      </label>
     </div>
   )
 }
@@ -1239,7 +903,7 @@ function Input({
   placeholder,
   type = 'text',
   min,
-  required = false,
+  required,
 }: {
   label: string
   value: string
@@ -1250,21 +914,18 @@ function Input({
   required?: boolean
 }) {
   return (
-    <div>
-      <label className="block text-cream/58 text-[11px] font-semibold mb-2.5">
-        {label}
-      </label>
-
+    <label className="block">
+      <span className="block text-sm font-semibold text-cream mb-2">{label}</span>
       <input
         type={type}
+        min={min}
         value={value}
+        required={required}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        min={min}
-        required={required}
-        className="field"
+        className="w-full rounded-xl bg-ink border border-gold/15 text-cream placeholder:text-cream/30 px-4 py-3 outline-none focus:border-gold focus:ring-2 focus:ring-gold/10"
       />
-    </div>
+    </label>
   )
 }
 
@@ -1280,97 +941,34 @@ function TextArea({
   placeholder?: string
 }) {
   return (
-    <div>
-      <label className="block text-cream/58 text-[11px] font-semibold mb-2.5">
-        {label}
-      </label>
-
+    <label className="block">
+      <span className="block text-sm font-semibold text-cream mb-2">{label}</span>
       <textarea
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        rows={4}
-        className="field resize-none"
+        rows={3}
+        className="w-full rounded-xl bg-ink border border-gold/15 text-cream placeholder:text-cream/30 px-4 py-3 outline-none resize-none focus:border-gold focus:ring-2 focus:ring-gold/10"
       />
-    </div>
-  )
-}
-
-function BarberImageField({
-  preview,
-  onChange,
-  onRemove,
-}: {
-  preview: string
-  onChange: (event: ChangeEvent<HTMLInputElement>) => void
-  onRemove: () => void
-}) {
-  return (
-    <div>
-      <label className="block text-cream/58 text-[11px] font-semibold mb-2.5">
-        صورة الحلاق
-      </label>
-
-      {preview ? (
-        <div className="relative w-full h-48 rounded-2xl overflow-hidden border border-white/10">
-          <img
-            src={preview}
-            alt="معاينة صورة الحلاق"
-            className="w-full h-full object-cover"
-          />
-
-          <button
-            type="button"
-            onClick={onRemove}
-            className="absolute top-3 left-3 w-9 h-9 rounded-xl bg-black/60 backdrop-blur-md border border-white/10 text-white flex items-center justify-center hover:bg-red-500/70 transition-all"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      ) : (
-        <label className="relative flex flex-col items-center justify-center gap-3 h-40 rounded-2xl border border-dashed border-gold/20 bg-gold/5 cursor-pointer hover:bg-gold/8 transition-all">
-          <Upload className="w-6 h-6 text-gold" />
-
-          <div className="text-center">
-            <p className="text-cream text-[11px] font-bold">
-              رفع صورة
-            </p>
-
-            <p className="mt-1 text-cream/35 text-[9px]">
-              PNG أو JPG
-            </p>
-          </div>
-
-          <input
-            type="file"
-            accept="image/*"
-            onChange={onChange}
-            className="absolute inset-0 opacity-0 cursor-pointer"
-          />
-        </label>
-      )}
-    </div>
+    </label>
   )
 }
 
 function SubmitButton({
-  loading,
+  saving,
   label,
 }: {
-  loading: boolean
+  saving: boolean
   label: string
 }) {
   return (
     <button
       type="submit"
-      disabled={loading}
-      className="btn-gold w-full inline-flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-2xl text-[12px] disabled:opacity-60 disabled:cursor-not-allowed"
+      disabled={saving}
+      className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gold px-4 py-3 text-white font-semibold hover:bg-gold/90 disabled:opacity-60"
     >
-      {loading && (
-        <Loader2 className="w-4 h-4 animate-spin" />
-      )}
-
-      {loading ? 'جاري الحفظ...' : label}
+      {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+      {saving ? 'جارٍ الحفظ...' : label}
     </button>
   )
 }

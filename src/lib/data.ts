@@ -15,18 +15,6 @@ export const SITE = {
   whatsapp: '213550123456',
 }
 
-/** أكواد الخصم المتاحة عند الحجز (نسبة مئوية من مجموع الخدمات) */
-export const PROMO_CODES: Record<string, { percent: number; label: string }> = {
-  MAISON10: { percent: 10, label: 'خصم 10%' },
-  PRESTIGE15: { percent: 15, label: 'خصم 15%' },
-}
-
-export const calcPromoDiscount = (code: string | undefined, subtotal: number): number => {
-  if (!code) return 0
-  const promo = PROMO_CODES[code.trim().toUpperCase()]
-  if (!promo) return 0
-  return Math.round((subtotal * promo.percent) / 100)
-}
 
 export const NEIGHBORHOODS = [
   'الجزائر الوسطى',

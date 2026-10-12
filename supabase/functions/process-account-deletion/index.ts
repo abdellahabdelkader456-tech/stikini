@@ -191,7 +191,9 @@ Deno.serve(async (req) => {
     }
 
     const salonRows = salons ?? [];
-    const salonIds = salonRows.map((salon) => salon.id);
+   const salonIds = salonRows.map(
+  (salon: { id: string }) => salon.id,
+);
     const imageUrls: (string | null | undefined)[] = [];
 
     for (const salon of salonRows) {

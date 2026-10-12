@@ -19,7 +19,6 @@ import type {
   User,
 } from './types'
 
-import { PROMO_CODES } from './data'
 import { generateBookingCode } from './utils'
 import { supabase } from './supabase'
 
@@ -60,7 +59,6 @@ export interface NewBookingInput {
   phone: string
   email: string
   notes: string
-  promoCode?: string
 }
 
 /* -------------------------------------------------------------------------- */
@@ -97,12 +95,16 @@ interface StoreValue {
   salons: Salon[]
 
   allBookings: Booking[]
+  publicUpcomingBookings: Booking[]
+  /** Backward-compatible name used by DashboardPage. */
   upcomingBookings: Booking[]
+  refreshPublicUpcomingBookings: () => Promise<void>
   bookings: Booking[]
   myBookings: Booking[]
   salonBookings: Booking[]
   ownerSalonBookings: Booking[]
 
+  
   favorites: string[]
 
   toasts: ToastItem[]
@@ -175,9 +177,7 @@ interface StoreValue {
 
   refreshPublicBookings: () => Promise<void>
 
-  setOwnerSalon: (
-    salonId: string,
-  ) => Promise<void>
+
 
   toggleFavorite: (
     salonId: string,
@@ -572,9 +572,7 @@ export function StoreProvider({
   const [allBookings, setAllBookings] =
     useState<Booking[]>([])
 
-  // Safe, platform-wide list for the client dashboard overview.
-  // This comes from a database view that omits customer contact details.
-  const [upcomingBookings, setUpcomingBookings] =
+  const [publicUpcomingBookings, setPublicUpcomingBookings] =
     useState<Booking[]>([])
 
   const [favorites, setFavorites] =
@@ -1086,29 +1084,27 @@ export function StoreProvider({
             }
           }
 
-          const { error } =
-            await supabase
-              .from('salons')
-              .update({
-                status: 'approved',
-              })
-              .eq(
-                'id',
-                salonId,
-              )
+      
+const { data, error } = await supabase.functions.invoke(
+  'manage-salon-status',
+  {
+    body: {
+      salonId,
+      status: 'approved',
+    },
+  },
+)
 
-          if (error) {
-            console.error(
-              'Approve salon error:',
-              error,
-            )
+if (error || data?.ok !== true) {
+  console.error('Approve salon error:', error ?? data)
 
-            return {
-              ok: false,
-              error: error.message,
-              message: error.message,
-            }
-          }
+  return {
+    ok: false,
+    error: error?.message ?? data?.message ?? 'تعذرت الموافقة على الصالون',
+    message: data?.message ?? error?.message ?? 'تعذرت الموافقة على الصالون',
+  }
+}
+
 
           await Promise.all([
             loadSalons(),
@@ -1158,29 +1154,27 @@ export function StoreProvider({
             }
           }
 
-          const { error } =
-            await supabase
-              .from('salons')
-              .update({
-                status: 'rejected',
-              })
-              .eq(
-                'id',
-                salonId,
-              )
+          
+const { data, error } = await supabase.functions.invoke(
+  'manage-salon-status',
+  {
+    body: {
+      salonId,
+      status: 'rejected',
+    },
+  },
+)
 
-          if (error) {
-            console.error(
-              'Reject salon error:',
-              error,
-            )
+if (error || data?.ok !== true) {
+  console.error('Reject salon error:', error ?? data)
 
-            return {
-              ok: false,
-              error: error.message,
-              message: error.message,
-            }
-          }
+  return {
+    ok: false,
+    error: error?.message ?? data?.message ?? 'تعذر رفض الصالون',
+    message: data?.message ?? error?.message ?? 'تعذر رفض الصالون',
+  }
+}
+
 
           await loadPendingSalons()
 
@@ -1215,83 +1209,61 @@ export function StoreProvider({
   const refreshPublicBookings =
     useCallback(async () => {
       try {
-        // Private rows are still fetched from bookings under existing RLS,
-        // so customers can only manage their own bookings and owners theirs.
         const {
-          data: privateRows,
-          error: privateError,
+          data,
+          error,
         } = await supabase
           .from('bookings')
           .select('*')
-          .order('created_at', { ascending: false })
+          .order(
+            'created_at',
+            {
+              ascending: false,
+            },
+          )
 
-        if (privateError) {
-          console.error('Error loading personal/salon bookings:', privateError)
-        } else {
-          setAllBookings((privateRows ?? []).map(mapBooking))
-        }
+        if (error) {
+          console.error(
+            'Error loading bookings:',
+            error,
+          )
 
-        // Public overview list uses a restricted SQL view: no client name,
-        // phone, email, notes, or user_id is exposed to other customers.
-        const {
-          data: publicRows,
-          error: publicError,
-        } = await supabase
-          .from('public_upcoming_bookings')
-          .select('id, code, salon_id, salon_name, services, barber_name, date, time, total_price, discount, promo_code, status, created_at')
-          .order('date', { ascending: true })
-          .order('time', { ascending: true })
-
-        if (publicError) {
-          console.error('Error loading platform upcoming bookings:', publicError)
-          setUpcomingBookings([])
           return
         }
 
-        setUpcomingBookings((publicRows ?? []).map(mapBooking))
+        setAllBookings(
+          (data ?? []).map(
+            mapBooking,
+          ),
+        )
       } catch (error) {
-        console.error('Unexpected booking loading error:', error)
+        console.error(
+          'Unexpected booking loading error:',
+          error,
+        )
       }
     }, [])
 
 
-  /* ------------------------------------------------------------------------ */
-  /* Automatic booking updates                                                */
-  /* ------------------------------------------------------------------------ */
 
-  useEffect(() => {
-    // Load bookings immediately.
-    void refreshPublicBookings()
+  const refreshPublicUpcomingBookings = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('public_upcoming_bookings')
+        .select('*')
+        .order('date', { ascending: true })
+        .order('time', { ascending: true })
 
-    // Listen for changes in the bookings table.
-    const channel = supabase
-      .channel('platform-bookings-live')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'bookings',
-        },
-        () => {
-          // Refresh the public overview automatically.
-          void refreshPublicBookings()
-        },
-      )
-      .subscribe((status) => {
-        if (status === 'CHANNEL_ERROR') {
-          console.error(
-            'Realtime booking subscription failed.',
-          )
-        }
-      })
+      if (error) {
+        console.error('Public upcoming bookings error:', error)
+        return
+      }
 
-    // Clean up the subscription when the component unmounts.
-    return () => {
-      void supabase.removeChannel(channel)
+      setPublicUpcomingBookings((data ?? []).map(mapBooking))
+    } catch (error) {
+      console.error('Unexpected public bookings error:', error)
     }
-  }, [refreshPublicBookings])
-
+  }, [])
 
   /* ------------------------------------------------------------------------ */
   /* Initialize                                                               */
@@ -1306,6 +1278,7 @@ export function StoreProvider({
           await loadSalons()
           await loadUserData()
           await refreshPublicBookings()
+          await refreshPublicUpcomingBookings()
         } catch (error) {
           console.error(
             'Store initialization error:',
@@ -1335,11 +1308,14 @@ export function StoreProvider({
             setIsAdmin(false)
             setFavorites([])
             setPendingSalons([])
+            setPublicUpcomingBookings([])
             return
           }
 
           try {
             await loadUserData()
+            await refreshPublicBookings()
+            await refreshPublicUpcomingBookings()
           } catch (error) {
             console.error(
               'Auth state profile loading error:',
@@ -1357,6 +1333,7 @@ export function StoreProvider({
     loadSalons,
     loadUserData,
     refreshPublicBookings,
+    refreshPublicUpcomingBookings,
   ])
 
   /* ------------------------------------------------------------------------ */
@@ -1503,93 +1480,36 @@ export function StoreProvider({
   /* Register                                                                 */
   /* ------------------------------------------------------------------------ */
 
-  const register = useCallback(
-    async ({
-      name,
-      email,
-      phone,
-      password,
-      type,
-    }: {
-      name: string
-      email: string
-      phone: string
-      password: string
-      type: UserType
-    }) => {
-      try {
-        const {
-          data,
-          error,
-        } =
-          await supabase.auth.signUp({
-            email: email.trim(),
-            password,
-            options: {
-              data: {
-                name: name.trim(),
-                phone: phone.trim(),
-                type,
-              },
-            },
-          })
+ 
+const register = useCallback(
+  async ({
+    name,
+    email,
+    phone,
+    password,
+    type,
+  }: {
+    name: string
+    email: string
+    phone: string
+    password: string
+    type: UserType
+  }) => {
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: {
+          data: {
+            name: name.trim(),
+            phone: phone.trim(),
+            type,
+          },
+        },
+      })
 
-        if (error) {
-          const message =
-            authErrorMessage(error)
-
-          return {
-            ok: false,
-            error: message,
-            message,
-          }
-        }
-
-        if (!data.user) {
-          return {
-            ok: false,
-            error:
-              'تعذر إنشاء الحساب',
-            message:
-              'تعذر إنشاء الحساب',
-          }
-        }
-
-        const {
-          error: profileError,
-        } =
-          await supabase
-            .from('profiles')
-            .upsert(
-              {
-                id: data.user.id,
-                name: name.trim(),
-                email: email.trim(),
-                phone: phone.trim(),
-                type,
-              },
-              {
-                onConflict: 'id',
-              },
-            )
-
-        if (profileError) {
-          console.error(
-            'Profile creation error:',
-            profileError,
-          )
-        }
-
-        await loadUserData()
-
-        return {
-          ok: true,
-          message:
-            'تم إنشاء حسابك بنجاح! مرحباً بك في stikini.',
-        }
-      } catch (error) {
-        const message =
-          authErrorMessage(error)
+      if (error) {
+        const message = authErrorMessage(error)
 
         return {
           ok: false,
@@ -1597,192 +1517,100 @@ export function StoreProvider({
           message,
         }
       }
-    },
-    [loadUserData],
-  )
+
+      if (!data.user) {
+        const message = 'تعذر إنشاء الحساب'
+
+        return {
+          ok: false,
+          error: message,
+          message,
+        }
+      }
+
+      await loadUserData()
+
+      return {
+        ok: true,
+        message: 'تم إنشاء حسابك بنجاح! مرحباً بك في stikini.',
+      }
+    } catch (error) {
+      const message = authErrorMessage(error)
+
+      return {
+        ok: false,
+        error: message,
+        message,
+      }
+    }
+  },
+  [loadUserData],
+)
 
   /* ------------------------------------------------------------------------ */
   /* Logout                                                                   */
   /* ------------------------------------------------------------------------ */
 
-  const logout = async () => {
+ const logout = async () => {
   try {
     await supabase.auth.signOut()
   } catch (error) {
     console.error('Logout error:', error)
   } finally {
     setUser(null)
+    setIsAdmin(false)
+    setFavorites([])
+    setPendingSalons([])
+    setPublicUpcomingBookings([])
   }
 
   window.location.href = '/'
 }
-
   /* ------------------------------------------------------------------------ */
   /* Create booking                                                            */
   /* ------------------------------------------------------------------------ */
 
-  const createBooking =
-    useCallback(
-      async (
-        input: NewBookingInput,
-      ) => {
-        try {
-          const {
-            data: {
-              user: authUser,
+ 
+  const createBooking = useCallback(
+    async (input: NewBookingInput) => {
+      try {
+        const { data, error } = await supabase.functions.invoke(
+          'create-booking',
+          {
+            body: {
+              salonId: input.salonId,
+              services: input.services.map((service) => ({
+                id: service.id,
+              })),
+              barberName: input.barberName,
+              date: input.date,
+              time: input.time,
+              clientName: input.clientName,
+              phone: input.phone,
+              email: input.email,
+              notes: input.notes,
             },
-          } =
-            await supabase.auth.getUser()
+          },
+        )
 
-          const subtotal =
-            input.services.reduce(
-              (
-                sum,
-                service,
-              ) =>
-                sum +
-                Number(
-                  service.price,
-                ),
-              0,
-            )
+        if (error) {
+          let message = 'تعذر إنشاء الحجز. يرجى المحاولة لاحقًا.'
 
-          let discount = 0
+          try {
+            const response = error.context
 
-          if (input.promoCode) {
-            const promo =
-              PROMO_CODES[
-                input.promoCode
-              ]
+            if (response instanceof Response) {
+              const body = await response.clone().json()
 
-            if (promo) {
-              discount =
-                Math.round(
-                  subtotal *
-                    (promo.percent /
-                      100),
-                )
-
-              discount =
-                Math.min(
-                  discount,
-                  subtotal,
-                )
+              if (typeof body?.error === 'string') {
+                message = body.error
+              }
             }
+          } catch {
+            // Keep the safe default message.
           }
 
-          const totalPrice =
-            Math.max(
-              0,
-              subtotal - discount,
-            )
-
-          const bookingCode =
-            generateBookingCode()
-
-          const bookingPayload = {
-            code: bookingCode,
-
-            salon_id:
-              input.salonId,
-
-            salon_name:
-              input.salonName,
-
-            services:
-              input.services.map(
-                (service) => ({
-                  id: service.id,
-                  name: service.name,
-                  price: service.price,
-                  duration:
-                    service.duration,
-                }),
-              ),
-
-            barber_name:
-              input.barberName,
-
-            date: input.date,
-
-            time: input.time,
-
-            client_name:
-              input.clientName,
-
-            phone: input.phone,
-
-            email: input.email,
-
-            notes: input.notes,
-
-            total_price:
-              totalPrice,
-
-            discount,
-
-            promo_code:
-              input.promoCode ||
-              null,
-
-            user_id:
-              authUser?.id ?? null,
-
-            status: 'مؤكد',
-          }
-
-          const {
-            data,
-            error,
-          } = await supabase
-            .from('bookings')
-            .insert(
-              bookingPayload,
-            )
-            .select()
-            .single()
-
-          if (error) {
-            console.error(
-              'Create booking error:',
-              error,
-            )
-
-            return {
-              ok: false as const,
-              error:
-                error.message,
-              message:
-                error.message,
-            }
-          }
-
-          const booking =
-            mapBooking(data)
-
-          setAllBookings(
-            (current) => [
-              booking,
-              ...current,
-            ],
-          )
-
-          return {
-            ok: true as const,
-            booking,
-            message:
-              'تم إنشاء الحجز بنجاح',
-          }
-        } catch (error) {
-          console.error(
-            'Unexpected create booking error:',
-            error,
-          )
-
-          const message =
-            error instanceof Error
-              ? error.message
-              : 'حدث خطأ أثناء إنشاء الحجز'
+          console.error('Create booking function error:', error.message)
 
           return {
             ok: false as const,
@@ -1790,231 +1618,284 @@ export function StoreProvider({
             message,
           }
         }
-      },
-      [],
-    )
+
+        if (!data?.ok || !data?.booking) {
+          const message =
+            typeof data?.error === 'string'
+              ? data.error
+              : 'لم يتم تأكيد الحجز.'
+
+          return {
+            ok: false as const,
+            error: message,
+            message,
+          }
+        }
+
+        const booking = mapBooking(data.booking)
+
+        setAllBookings((current) => [
+          booking,
+          ...current.filter((item) => item.id !== booking.id),
+        ])
+
+        void refreshPublicUpcomingBookings()
+
+        return {
+          ok: true as const,
+          booking,
+          message: 'تم إنشاء الحجز بنجاح',
+        }
+      } catch (error) {
+        console.error('Unexpected create booking error:', error)
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'حدث خطأ أثناء إنشاء الحجز'
+
+        return {
+          ok: false as const,
+          error: message,
+          message,
+        }
+      }
+    },
+    [refreshPublicUpcomingBookings],
+  )
+
 
   /* ------------------------------------------------------------------------ */
   /* Cancel booking                                                            */
   /* ------------------------------------------------------------------------ */
 
-  const cancelBooking =
-    useCallback(
-      async (
-        bookingId: string,
-      ) => {
-        try {
-          const booking =
-            allBookings.find(
-              (item) =>
-                item.id ===
-                bookingId,
-            )
+  
+const cancelBooking = useCallback(
+  async (bookingId: string) => {
+    try {
+      const booking = allBookings.find(
+        (item) => item.id === bookingId,
+      )
 
-          if (!booking) {
-            return {
-              ok: false,
-              error:
-                'الحجز غير موجود',
-              message:
-                'الحجز غير موجود',
-            }
-          }
-
-          if (
-            !ownsBooking(
-              booking,
-              user,
-            )
-          ) {
-            return {
-              ok: false,
-              error:
-                'غير مصرح لك بإلغاء هذا الحجز',
-              message:
-                'غير مصرح لك بإلغاء هذا الحجز',
-            }
-          }
-
-          const {
-            data,
-            error,
-          } =
-            await supabase
-              .from('bookings')
-              .update({
-                status: 'ملغى',
-              })
-              .eq(
-                'id',
-                bookingId,
-              )
-              .select()
-              .single()
-
-          if (error) {
-            return {
-              ok: false,
-              error:
-                error.message,
-              message:
-                error.message,
-            }
-          }
-
-          const updatedBooking =
-            mapBooking(data)
-
-          setAllBookings(
-            (current) =>
-              current.map(
-                (item) =>
-                  item.id ===
-                  bookingId
-                    ? updatedBooking
-                    : item,
-              ),
-          )
-
-          return {
-            ok: true,
-            message:
-              'تم إلغاء الحجز',
-          }
-        } catch (error) {
-          const message =
-            error instanceof Error
-              ? error.message
-              : 'حدث خطأ أثناء إلغاء الحجز'
-
-          return {
-            ok: false,
-            error: message,
-            message,
-          }
+      if (!booking) {
+        return {
+          ok: false,
+          error: 'الحجز غير موجود',
+          message: 'الحجز غير موجود',
         }
-      },
-      [allBookings, user],
-    )
+      }
+
+      if (!user) {
+        return {
+          ok: false,
+          error: 'يرجى تسجيل الدخول أولاً',
+          message: 'يرجى تسجيل الدخول أولاً',
+        }
+      }
+
+      if (booking.status !== 'مؤكد') {
+        return {
+          ok: false,
+          error: 'لا يمكن إلغاء هذا الحجز في حالته الحالية',
+          message: 'لا يمكن إلغاء هذا الحجز في حالته الحالية',
+        }
+      }
+
+      // Client-side check for a better user experience.
+      // The Edge Function performs the authoritative authorization check.
+      if (
+        user.type !== 'owner' &&
+        !isAdmin &&
+        booking.userId !== user.id
+      ) {
+        return {
+          ok: false,
+          error: 'غير مصرح لك بإلغاء هذا الحجز',
+          message: 'غير مصرح لك بإلغاء هذا الحجز',
+        }
+      }
+
+      const { data, error } = await supabase.functions.invoke(
+        'update-booking-status',
+        {
+          body: {
+            bookingId,
+            status: 'ملغى',
+          },
+        },
+      )
+
+      if (error || !data?.ok || !data?.booking) {
+        let message =
+          typeof data?.error === 'string'
+            ? data.error
+            : 'تعذر إلغاء الحجز. يرجى المحاولة مجددًا.'
+
+        try {
+          const response = error?.context
+
+          if (response instanceof Response) {
+            const responseBody = await response.clone().json()
+
+            if (typeof responseBody?.error === 'string') {
+              message = responseBody.error
+            }
+          }
+        } catch {
+          // Keep the safe fallback message.
+        }
+
+        return {
+          ok: false,
+          error: message,
+          message,
+        }
+      }
+
+      const updatedBooking = mapBooking(data.booking)
+
+      setAllBookings((current) =>
+        current.map((item) =>
+          item.id === bookingId ? updatedBooking : item,
+        ),
+      )
+
+      await Promise.all([
+        refreshPublicBookings(),
+        refreshPublicUpcomingBookings(),
+      ])
+
+      return {
+        ok: true,
+        message: 'تم إلغاء الحجز بنجاح',
+      }
+    } catch (error) {
+      console.error('Cancel booking error:', error)
+
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'حدث خطأ أثناء إلغاء الحجز'
+
+      return {
+        ok: false,
+        error: message,
+        message,
+      }
+    }
+  },
+  [
+    allBookings,
+    user,
+    isAdmin,
+    refreshPublicBookings,
+    refreshPublicUpcomingBookings,
+  ],
+)
+
 
   /* ------------------------------------------------------------------------ */
   /* Update booking status                                                     */
   /* ------------------------------------------------------------------------ */
 
-  const updateBookingStatus =
-    useCallback(
-      async (
-        bookingId: string,
-        status: BookingStatus,
-      ) => {
-        try {
-          const {
-            data,
-            error,
-          } =
-            await supabase
-              .from('bookings')
-              .update({
-                status,
-              })
-              .eq(
-                'id',
-                bookingId,
-              )
-              .select()
-              .single()
+  
+const updateBookingStatus = useCallback(
+  async (bookingId: string, status: BookingStatus) => {
+    try {
+      // Only allow cancellation or completion.
+      // Re-confirming a booking is not allowed through this function.
+      if (status !== 'ملغى' && status !== 'مكتمل') {
+        const message = 'لا يمكن إعادة تفعيل الحجز عبر هذا المسار'
 
-          if (error) {
-            return {
-              ok: false,
-              error:
-                error.message,
-              message:
-                error.message,
+        return {
+          ok: false,
+          error: message,
+          message,
+        }
+      }
+
+      const { data, error } = await supabase.functions.invoke(
+        'update-booking-status',
+        {
+          body: {
+            bookingId,
+            status,
+          },
+        },
+      )
+
+      if (error || !data?.ok || !data?.booking) {
+        let message =
+          typeof data?.error === 'string'
+            ? data.error
+            : 'تعذر تحديث الحجز. يرجى المحاولة مجددًا.'
+
+        try {
+          const response = error?.context
+
+          if (response instanceof Response) {
+            const responseBody = await response.clone().json()
+
+            if (typeof responseBody?.error === 'string') {
+              message = responseBody.error
             }
           }
-
-          const updatedBooking =
-            mapBooking(data)
-
-          setAllBookings(
-            (current) =>
-              current.map(
-                (item) =>
-                  item.id ===
-                  bookingId
-                    ? updatedBooking
-                    : item,
-              ),
-          )
-
-          return {
-            ok: true,
-            message:
-              'تم تحديث حالة الحجز',
-          }
-        } catch (error) {
-          const message =
-            error instanceof Error
-              ? error.message
-              : 'حدث خطأ أثناء تحديث الحجز'
-
-          return {
-            ok: false,
-            error: message,
-            message,
-          }
+        } catch {
+          // Keep the fallback message if the response is not JSON.
         }
-      },
-      [],
-    )
+
+        return {
+          ok: false,
+          error: message,
+          message,
+        }
+      }
+
+      const updatedBooking = mapBooking(data.booking)
+
+      setAllBookings((current) =>
+        current.map((item) =>
+          item.id === bookingId ? updatedBooking : item,
+        ),
+      )
+
+      await Promise.all([
+        refreshPublicBookings(),
+        refreshPublicUpcomingBookings(),
+      ])
+
+      return {
+        ok: true,
+        message:
+          status === 'ملغى'
+            ? 'تم إلغاء الحجز بنجاح'
+            : 'تم إكمال الحجز بنجاح',
+      }
+    } catch (error) {
+      console.error('Update booking status error:', error)
+
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'حدث خطأ أثناء تحديث الحجز'
+
+      return {
+        ok: false,
+        error: message,
+        message,
+      }
+    }
+  },
+  [
+    refreshPublicBookings,
+    refreshPublicUpcomingBookings,
+  ],
+)
+
 
   const updateSalonBookingStatus =
     updateBookingStatus
 
-  /* ------------------------------------------------------------------------ */
-  /* Owner salon                                                               */
-  /* ------------------------------------------------------------------------ */
-
-  const setOwnerSalon =
-    useCallback(
-      async (
-        salonId: string,
-      ) => {
-        if (!user) return
-
-        const { error } =
-          await supabase
-            .from('profiles')
-            .update({
-              salon_id: salonId,
-            })
-            .eq(
-              'id',
-              user.id,
-            )
-
-        if (error) {
-          console.error(
-            'Set owner salon error:',
-            error,
-          )
-
-          return
-        }
-
-        setUser(
-          (current) =>
-            current
-              ? {
-                  ...current,
-                  salonId,
-                }
-              : current,
-        )
-      },
-      [user],
-    )
 
   /* ------------------------------------------------------------------------ */
   /* Favorites                                                                 */
@@ -2111,150 +1992,113 @@ export function StoreProvider({
       [favorites],
     )
 
+
   /* ------------------------------------------------------------------------ */
-  /* Derived bookings                                                          */
+  /* Derived bookings                                                        */
   /* ------------------------------------------------------------------------ */
 
-  const myBookings =
-    useMemo(() => {
-      if (!user) return []
+  const myBookings = useMemo(() => {
+    if (!user) return []
 
-      return allBookings.filter(
-        (booking) =>
-          ownsBooking(
-            booking,
-            user,
-          ),
-      )
-    }, [
-      allBookings,
-      user,
-    ])
+    return allBookings.filter((booking) =>
+      ownsBooking(booking, user),
+    )
+  }, [allBookings, user])
 
-  const ownerSalonBookings =
-    useMemo(() => {
-      if (!user?.salonId) {
-        return []
-      }
+  const ownerSalonBookings = useMemo(() => {
+    if (!user?.salonId) return []
 
-      return allBookings.filter(
-        (booking) =>
-          booking.salonId ===
-          user.salonId,
-      )
-    }, [
-      allBookings,
-      user,
-    ])
+    return allBookings.filter(
+      (booking) => booking.salonId === user.salonId,
+    )
+  }, [allBookings, user])
 
   const bookings = myBookings
-
-  const salonBookings =
-    ownerSalonBookings
+  const salonBookings = ownerSalonBookings
 
   /* ------------------------------------------------------------------------ */
-  /* Store value                                                               */
+  /* Store value                                                              */
   /* ------------------------------------------------------------------------ */
 
-  const value =
-    useMemo<StoreValue>(
-      () => ({
-        user,
-        isReady,
-        isAdmin,
+  const value = useMemo<StoreValue>(
+    () => ({
+      user,
+      isReady,
+      isAdmin,
+      pendingSalons,
+      loadPendingSalons,
+      approveSalon,
+      rejectSalon,
+      salons,
+      allBookings,
+      bookings,
+      myBookings,
 
-        pendingSalons,
-        loadPendingSalons,
-        approveSalon,
-        rejectSalon,
+      publicUpcomingBookings,
+      upcomingBookings: publicUpcomingBookings,
+      refreshPublicUpcomingBookings,
 
-        salons,
+      salonBookings,
+      ownerSalonBookings,
+      favorites,
+      toasts,
+      login,
+      register,
+      logout,
+      createBooking,
+      cancelBooking,
+      updateBookingStatus,
+      updateSalonBookingStatus,
+      refreshPublicBookings,
+      toggleFavorite,
+      isFavorite,
+      showToast,
+      removeToast,
+      dismissToast,
+    }),
+    [
+      user,
+      isReady,
+      isAdmin,
+      pendingSalons,
+      loadPendingSalons,
+      approveSalon,
+      rejectSalon,
+      salons,
+      allBookings,
+      bookings,
+      myBookings,
 
-        allBookings,
-        upcomingBookings,
-        bookings,
-        myBookings,
-        salonBookings,
-        ownerSalonBookings,
+      publicUpcomingBookings,
+      refreshPublicUpcomingBookings,
 
-        favorites,
+      salonBookings,
+      ownerSalonBookings,
+      favorites,
+      toasts,
+      login,
+      register,
+      logout,
+      createBooking,
+      cancelBooking,
+      updateBookingStatus,
+      updateSalonBookingStatus,
+      refreshPublicBookings,
+      toggleFavorite,
+      isFavorite,
+      showToast,
+      removeToast,
+      dismissToast,
+    ],
+  )
 
-        toasts,
-
-        login,
-        register,
-        logout,
-
-        createBooking,
-        cancelBooking,
-
-        updateBookingStatus,
-        updateSalonBookingStatus,
-
-        refreshPublicBookings,
-
-        setOwnerSalon,
-
-        toggleFavorite,
-        isFavorite,
-
-        showToast,
-        removeToast,
-        dismissToast,
-      }),
-      [
-        user,
-        isReady,
-        isAdmin,
-
-        pendingSalons,
-        loadPendingSalons,
-        approveSalon,
-        rejectSalon,
-
-        salons,
-
-        allBookings,
-        upcomingBookings,
-        bookings,
-        myBookings,
-        salonBookings,
-        ownerSalonBookings,
-
-        favorites,
-
-        toasts,
-
-        login,
-        register,
-        logout,
-
-        createBooking,
-        cancelBooking,
-
-        updateBookingStatus,
-        updateSalonBookingStatus,
-
-        refreshPublicBookings,
-
-        setOwnerSalon,
-
-        toggleFavorite,
-        isFavorite,
-
-        showToast,
-        removeToast,
-        dismissToast,
-      ],
-    )
-
-  return (
-    <StoreContext.Provider
-      value={value}
-    >
+  
+    return (
+    <StoreContext.Provider value={value}>
       {children}
     </StoreContext.Provider>
   )
+
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2262,8 +2106,7 @@ export function StoreProvider({
 /* -------------------------------------------------------------------------- */
 
 export function useStore(): StoreValue {
-  const context =
-    useContext(StoreContext)
+  const context = useContext(StoreContext)
 
   if (!context) {
     throw new Error(

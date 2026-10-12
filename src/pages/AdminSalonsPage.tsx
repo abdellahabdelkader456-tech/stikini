@@ -920,26 +920,21 @@ export default function AdminSalonsPage() {
       )
 
       try {
-        const { error } =
-          await supabase
-            .from('salons')
-            .update({
-              status,
-            })
-            .eq(
-              'id',
-              salonId,
-            )
+       const { data, error } = await supabase.functions.invoke(
+  'manage-salon-status',
+  {
+    body: {
+      salonId,
+      status,
+    },
+  },
+)
 
-        if (error) {
-          console.error(
-            'Error updating salon:',
-            error,
-          )
-
-          window.alert(
-            'حدث خطأ أثناء تحديث حالة الصالون.',
-          )
+if (error || data?.ok !== true) {
+  console.error('Error updating salon:', error ?? data)
+  window.alert(
+    data?.message ?? error?.message ?? 'حدث خطأ أثناء تحديث حالة الصالون.',
+  )
 
           return
         }

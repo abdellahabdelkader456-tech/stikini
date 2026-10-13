@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-
+import { QRCodeSVG } from 'qrcode.react'
 import {
   AlertCircle,
   AlertTriangle,
@@ -10,7 +10,9 @@ import {
   Image as ImageIcon,
   Mail,
   MapPin,
+  Download,
   Phone,
+   QrCode,
   RefreshCw,
   Search,
   Store,
@@ -488,6 +490,11 @@ export default function AdminSalonsPage() {
   )
 
   const [
+  qrSalon,
+  setQrSalon,
+] = useState<AdminSalon | null>(null)
+
+  const [
     selectedDeletionRequest,
     setSelectedDeletionRequest,
   ] = useState<DeletionRequest | null>(
@@ -496,6 +503,58 @@ export default function AdminSalonsPage() {
 
   const [adminNote, setAdminNote] =
     useState('')
+
+    const downloadSalonQR = () => {
+  if (!qrSalon) return
+
+  const svg = document.getElementById(
+    'salon-booking-qr',
+  ) as SVGSVGElement | null
+
+  if (!svg) return
+
+  const svgData =
+    new XMLSerializer().serializeToString(svg)
+
+  const svgBlob = new Blob(
+    [svgData],
+    { type: 'image/svg+xml;charset=utf-8' },
+  )
+
+  const url = URL.createObjectURL(svgBlob)
+  const image = new Image()
+
+  image.onload = () => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 640
+    canvas.height = 640
+
+    const context = canvas.getContext('2d')
+
+    if (!context) {
+      URL.revokeObjectURL(url)
+      return
+    }
+
+    context.fillStyle = '#ffffff'
+    context.fillRect(0, 0, 640, 640)
+    context.drawImage(image, 20, 20, 600, 600)
+
+    URL.revokeObjectURL(url)
+
+    const link = document.createElement('a')
+    link.download = `stikini-${qrSalon.slug}-qr.png`
+    link.href = canvas.toDataURL('image/png')
+    link.click()
+  }
+
+  image.onerror = () => {
+    URL.revokeObjectURL(url)
+    window.alert('تعذر إنشاء صورة QR. حاول مجددًا.')
+  }
+
+  image.src = url
+}
 
   const loadSalons = async () => {
     setLoading(true)
@@ -1397,7 +1456,19 @@ if (error || data?.ok !== true) {
                             />
                           </div>
 
+
+
                           <div className="flex gap-2">
+                            {salon.status === 'approved' && (
+  <button
+    type="button"
+    onClick={() => setQrSalon(salon)}
+    className="flex items-center justify-center gap-2 rounded-xl border border-gold/20 bg-gold/5 px-3 py-2.5 text-sm font-semibold text-gold transition hover:bg-gold/10"
+  >
+    <QrCode className="h-4 w-4" />
+    QR
+  </button>
+)}
                             <button
                               type="button"
                               onClick={() =>
@@ -2059,10 +2130,84 @@ if (error || data?.ok !== true) {
             </div>
           </div>
         </div>
+    
+      )}
+
+      {/* Salon Booking QR Modal */}
+      {qrSalon && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+          onClick={() => setQrSalon(null)}
+        >
+          <div
+            dir="rtl"
+            role="dialog"
+            aria-modal="true"
+            aria-label="رمز QR للحجز"
+            className="w-full max-w-md rounded-3xl border border-gold/20 bg-forest p-6 text-center shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <div className="text-right">
+                <h2 className="text-xl font-bold text-cream">
+                  رمز QR للحجز
+                </h2>
+                <p className="mt-1 text-sm text-cream/50">
+                  {qrSalon.name}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setQrSalon(null)}
+                className="rounded-xl border border-white/10 bg-white/5 p-2 text-cream/70 hover:text-cream"
+                aria-label="إغلاق"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="my-6 inline-block rounded-2xl bg-white p-4">
+              <QRCodeSVG
+                id="salon-booking-qr"
+                value={`${window.location.origin}/booking/${encodeURIComponent(qrSalon.slug)}`}
+                size={256}
+                level="H"
+                includeMargin
+                bgColor="#ffffff"
+                fgColor="#111111"
+              />
+            </div>
+
+            <p className="mb-5 break-all text-xs leading-5 text-cream/50" dir="ltr">
+              {`${window.location.origin}/booking/${encodeURIComponent(qrSalon.slug)}`}
+            </p>
+
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={downloadSalonQR}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gold px-4 py-3 text-sm font-bold text-forest hover:bg-gold/90"
+              >
+                <Download className="h-4 w-4" />
+                تحميل QR
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setQrSalon(null)}
+                className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-cream hover:bg-white/10"
+              >
+                إغلاق
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Deletion Request Modal */}
       {selectedDeletionRequest && (
+
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
           onClick={() => {

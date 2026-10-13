@@ -1,5 +1,6 @@
 import { ChangeEvent, FormEvent, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { QRCodeSVG } from 'qrcode.react'
 import {
   ArrowRight,
   CalendarDays,
@@ -14,6 +15,8 @@ import {
   X,
   CheckCircle2,
   Ban,
+  Download,
+  QrCode,
 } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { supabase } from '../lib/supabase'
@@ -88,6 +91,19 @@ function appointmentStatusClass(status: string | null) {
   }
 }
 
+
+function createOwnerSalonSlug(name: string, id: string): string {
+  const cleanName = name
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^\p{L}\p{N}-]+/gu, '')
+    .replace(/-+/g, '-')
+
+  return `${cleanName || 'salon'}-${id.slice(0, 8)}`
+}
+
+
 export default function CrmPage() {
   const {
   user,
@@ -97,6 +113,7 @@ export default function CrmPage() {
 } = useStore()
 
   const [salon, setSalon] = useState<Salon | null>(null)
+  const [showSalonQR, setShowSalonQR] = useState(false)
   const [services, setServices] = useState<Service[]>([])
   const [barbers, setBarbers] = useState<Barber[]>([])
   const [appointments, setAppointments] = useState<Appointment[]>([])
@@ -215,6 +232,66 @@ export default function CrmPage() {
       setLoading(false)
     }
   }
+
+
+  function downloadSalonQR() {
+    const svg = document.getElementById(
+      'owner-salon-booking-qr',
+    ) as SVGSVGElement | null
+
+    if (!salon || !svg) {
+      showToast('QR غير جاهز للتنزيل', 'error')
+      return
+    }
+
+    const svgData = new XMLSerializer().serializeToString(svg)
+    const svgBlob = new Blob([svgData], {
+      type: 'image/svg+xml;charset=utf-8',
+    })
+    const url = URL.createObjectURL(svgBlob)
+    const image = new Image()
+
+    image.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = 768
+      canvas.height = 768
+
+      const context = canvas.getContext('2d')
+
+      if (!context) {
+        URL.revokeObjectURL(url)
+        showToast('تعذر إنشاء صورة QR', 'error')
+        return
+      }
+
+      context.fillStyle = '#ffffff'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+      context.drawImage(image, 0, 0, 768, 768)
+      URL.revokeObjectURL(url)
+
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          showToast('تعذر تنزيل QR', 'error')
+          return
+        }
+
+        const downloadUrl = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = downloadUrl
+       link.download = `stikini-${createOwnerSalonSlug(salon.name, salon.id)}-qr.png`
+        link.click()
+        URL.revokeObjectURL(downloadUrl)
+      }, 'image/png')
+    }
+
+    image.onerror = () => {
+      URL.revokeObjectURL(url)
+      showToast('تعذر إنشاء صورة QR', 'error')
+    }
+
+    image.src = url
+  }
+
 
 async function handleBookingStatusChange(
   appointment: Appointment,
@@ -532,6 +609,18 @@ async function handleBookingStatusChange(
         <div className="max-w-7xl mx-auto px-5 py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-sm text-cream/60 mb-1">
+            
+{salon.status === 'approved' && (
+  <button
+    type="button"
+    onClick={() => setShowSalonQR(true)}
+    className="inline-flex items-center gap-2 rounded-xl border border-gold/30 bg-gold/10 px-4 py-2.5 text-gold font-semibold hover:bg-gold/20 transition-colors cursor-pointer shrink-0"
+  >
+    <QrCode className="w-4 h-4" />
+    عرض QR للحجز
+  </button>
+)}
+
               <Link to="/dashboard" className="hover:text-gold">لوحة التحكم</Link>
               <ArrowRight className="w-4 h-4" />
               <span>إدارة الصالون</span>
@@ -811,6 +900,56 @@ async function handleBookingStatusChange(
           )}
         </section>
       </main>
+
+
+      {showSalonQR && salon?.status === 'approved' && (
+        <Modal
+          title="QR الخاص بحجوزات الصالون"
+          onClose={() => setShowSalonQR(false)}
+        >
+          <div className="space-y-5 text-center">
+            <p className="text-sm text-cream/70">
+              امسح الرمز لفتح صفحة حجز موعد في صالونك.
+            </p>
+
+            <div className="mx-auto flex w-fit justify-center rounded-2xl bg-white p-4">
+              <QRCodeSVG
+                id="owner-salon-booking-qr"
+                value={`${window.location.origin}/booking/${encodeURIComponent(createOwnerSalonSlug(salon.name, salon.id))}`}
+                size={256}
+                level="H"
+                includeMargin
+                bgColor="#ffffff"
+                fgColor="#111111"
+              />
+            </div>
+
+            <p className="break-all text-xs text-cream/60" dir="ltr">
+            {`${window.location.origin}/booking/${encodeURIComponent(createOwnerSalonSlug(salon.name, salon.id))}`}
+            </p>
+
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <button
+                type="button"
+                onClick={downloadSalonQR}
+                className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-gold px-4 py-3 font-semibold text-ink transition hover:bg-gold/90"
+              >
+                <Download className="h-4 w-4" />
+                تنزيل QR بصيغة PNG
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowSalonQR(false)}
+                className="rounded-xl border border-gold/20 px-4 py-3 font-semibold text-cream transition hover:bg-white/5"
+              >
+                إغلاق
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
 
       {serviceModal && (
         <Modal title="إضافة خدمة" onClose={() => setServiceModal(false)}>

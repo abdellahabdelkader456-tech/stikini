@@ -418,13 +418,15 @@ const salon = salons.find((s) => s.slug === slug)
                         ))}
                       </div>
 
-                      <Link
-                        to={`/booking/${salon.slug}`}
-                        className="mt-6 flex items-center justify-center gap-2 py-3 rounded-2xl border border-gold/24 text-gold text-[12.5px] font-bold hover:bg-gold/12 transition-all"
-                      >
-                        احجز مع {barber.name.split(' ')[0]}
-                        <ArrowLeft className="w-3.5 h-3.5" />
-                      </Link>
+                      {user?.type !== 'owner' && (
+                        <Link
+                          to={`/booking/${salon.slug}`}
+                          className="mt-6 flex items-center justify-center gap-2 py-3 rounded-2xl border border-gold/24 text-gold text-[12.5px] font-bold hover:bg-gold/12 transition-all"
+                        >
+                          احجز مع {barber.name.split(' ')[0]}
+                          <ArrowLeft className="w-3.5 h-3.5" />
+                        </Link>
+                      )}
                     </div>
                   </motion.div>
                 ))}

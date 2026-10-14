@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+﻿import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams, Navigate, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -45,11 +45,13 @@ export default function BookingPage() {
 const navigate = useNavigate()
 
 const {
+  isReady,
   salons,
   createBooking,
   user,
   showToast,
   publicUpcomingBookings,
+  refreshPublicUpcomingBookings,
 } = useStore()
 
 const salon = salons.find((s) => s.slug === slug)
@@ -66,7 +68,7 @@ const salon = salons.find((s) => s.slug === slug)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
   const [confirmedBooking, setConfirmedBooking] = useState<Booking | null>(null)
-
+  const [availabilityLoaded, setAvailabilityLoaded] = useState(false)
   const days = useMemo(() => getUpcomingDays(14), [])
 
   // الأوقات المحجوزة فعلياً لنفس الحلاق ونفس اليوم في هذا الصالون (لأي زبون، وليس المستخدم الحالي فقط)
@@ -85,6 +87,38 @@ const salon = salons.find((s) => s.slug === slug)
     )
   }, [publicUpcomingBookings, salon, selectedBarber, date])
 
+useEffect(() => {
+  if (!salon || !date) {
+    setAvailabilityLoaded(false)
+    return
+  }
+
+  let active = true
+
+  const loadAvailability = async () => {
+    setAvailabilityLoaded(false)
+
+    try {
+      await refreshPublicUpcomingBookings()
+    } finally {
+      if (active) {
+        setAvailabilityLoaded(true)
+      }
+    }
+  }
+
+  void loadAvailability()
+
+  const intervalId = window.setInterval(() => {
+    void refreshPublicUpcomingBookings()
+  }, 15000)
+
+  return () => {
+    active = false
+    window.clearInterval(intervalId)
+  }
+}, [salon?.id, date, refreshPublicUpcomingBookings])
+
   useEffect(() => {
     if (time && bookedTimesForSelection.has(time)) {
       setTime('')
@@ -100,6 +134,14 @@ const salon = salons.find((s) => s.slug === slug)
   const subtotalPrice = chosenServices.reduce((sum, s) => sum + s.price, 0)
   const totalPrice = subtotalPrice
   const totalDuration = chosenServices.reduce((sum, s) => sum + s.duration, 0)
+
+  if (!isReady) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        جاري تحميل بيانات الصالون...
+      </div>
+    )
+  }
 
   if (!salon) {
     return <Navigate to="/salons" replace />
@@ -693,23 +735,32 @@ const salon = salons.find((s) => s.slug === slug)
                           جميع الأوقات بالتوقيت المحلي للجزائر
                         </p>
 
+                        {!availabilityLoaded && (
+  <p className="text-gold/70 text-xs mb-3" role="status">
+    جارٍ تحديث الأوقات المتاحة...
+  </p>
+)}
+
                         {errors.time && <ErrorBanner message={errors.time} />}
 
                         <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-3">
                           {TIME_SLOTS.map((slot) => {
-                            const isBooked = bookedTimesForSelection.has(slot)
+                           const isBooked = bookedTimesForSelection.has(slot)
+const isDisabled = isBooked || !availabilityLoaded
                             return (
                               <button
                                 key={slot}
-                                disabled={isBooked}
+                                disabled={isDisabled}
                                 onClick={() => {
                                   setTime(slot)
                                   setErrors((e) => ({ ...e, time: '' }))
                                 }}
                                 className={cn(
                                   'py-3.5 rounded-2xl border text-[13px] font-bold transition-all',
-                                  isBooked
-                                    ? 'bg-white/2 border-white/6 text-cream/22 cursor-not-allowed line-through'
+                                    isBooked
+  ? 'bg-white/2 border-white/6 text-cream/22 cursor-not-allowed line-through'
+  : !availabilityLoaded
+    ? 'bg-white/2 border-white/6 text-cream/30 cursor-wait'
                                     : time === slot
                                       ? 'bg-gold text-ink border-gold'
                                       : 'bg-white/3.5 border-white/9 text-cream/68 hover:border-gold/32 hover:text-gold',

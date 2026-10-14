@@ -16,6 +16,7 @@ import type {
   Salon,
   SalonService,
   ToastItem,
+  UpcomingBookingDisplay,
   User,
 } from './types'
 
@@ -95,9 +96,8 @@ interface StoreValue {
   salons: Salon[]
 
   allBookings: Booking[]
-  publicUpcomingBookings: Booking[]
-  /** Backward-compatible name used by DashboardPage. */
-  upcomingBookings: Booking[]
+ publicUpcomingBookings: UpcomingBookingDisplay[]
+upcomingBookings: UpcomingBookingDisplay[]
   refreshPublicUpcomingBookings: () => Promise<void>
   bookings: Booking[]
   myBookings: Booking[]
@@ -572,8 +572,8 @@ export function StoreProvider({
   const [allBookings, setAllBookings] =
     useState<Booking[]>([])
 
-  const [publicUpcomingBookings, setPublicUpcomingBookings] =
-    useState<Booking[]>([])
+ const [publicUpcomingBookings, setPublicUpcomingBookings] =
+  useState<UpcomingBookingDisplay[]>([])
 
   const [favorites, setFavorites] =
     useState<string[]>([])
@@ -1246,24 +1246,62 @@ if (error || data?.ok !== true) {
 
 
 
-  const refreshPublicUpcomingBookings = useCallback(async () => {
-    try {
-      const { data, error } = await supabase
-        .from('public_upcoming_bookings')
-        .select('*')
-        .order('date', { ascending: true })
-        .order('time', { ascending: true })
 
-      if (error) {
-        console.error('Public upcoming bookings error:', error)
-        return
-      }
 
-      setPublicUpcomingBookings((data ?? []).map(mapBooking))
-    } catch (error) {
-      console.error('Unexpected public bookings error:', error)
+ 
+const refreshPublicUpcomingBookings = useCallback(async () => {
+  try {
+    const { data, error } = await supabase.rpc(
+      'get_upcoming_bookings_display'
+    )
+
+    if (error) {
+      console.error(
+        'Public upcoming bookings error:',
+        JSON.stringify(
+          {
+            code: error.code,
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+          },
+          null,
+          2
+        )
+      )
+      return
     }
-  }, [])
+
+    const displayBookings: UpcomingBookingDisplay[] = (data ?? []).map(
+      (row: any) => ({
+        salonName: String(row.salon_name ?? ''),
+        services: Array.isArray(row.services)
+          ? row.services.map((service: any) => ({
+              id: String(service.id ?? ''),
+              name: String(service.name ?? ''),
+              price: Number(service.price ?? 0),
+              duration: Number(service.duration ?? 0),
+            }))
+          : [],
+        barberName: String(row.barber_name ?? ''),
+        date: String(row.date ?? ''),
+        time: String(row.time ?? ''),
+        totalPrice: Number(row.total_price ?? 0),
+        status: row.status as BookingStatus,
+      })
+    )
+
+    setPublicUpcomingBookings(displayBookings)
+  } catch (error) {
+    console.error('Unexpected public bookings error:', error)
+  }
+}, [])
+
+
+
+
+  
+
 
   /* ------------------------------------------------------------------------ */
   /* Initialize                                                               */

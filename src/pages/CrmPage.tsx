@@ -160,12 +160,30 @@ export default function CrmPage() {
     setLoading(true)
 
     try {
-      // IMPORTANT:
-      // The owner is identified by profiles.id -> salons.owner_id.
-      // We do not trust a salon id coming from the URL.
+
+      // Resolve the owner's salon through profiles.salon_id.
+      // Never choose randomly when an owner has multiple salons.
+      const { data: profileRow, error: profileError } = await supabase
+        .from('profiles')
+        .select('salon_id')
+        .eq('id', user.id)
+        .maybeSingle()
+
+      if (profileError) throw profileError
+
+      if (!profileRow?.salon_id) {
+        setSalon(null)
+        setServices([])
+        setBarbers([])
+        setAppointments([])
+        return
+      }
+
+      // Verify that the selected salon actually belongs to this owner.
       const { data: salonRow, error: salonError } = await supabase
         .from('salons')
         .select('id,name,address,wilaya,commune,category,status')
+        .eq('id', profileRow.salon_id)
         .eq('owner_id', user.id)
         .maybeSingle()
 
@@ -180,6 +198,7 @@ export default function CrmPage() {
       }
 
       setSalon(salonRow as Salon)
+
 
       const [servicesResult, barbersResult, appointmentsResult] = await Promise.all([
         supabase

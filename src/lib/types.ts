@@ -92,6 +92,19 @@ export interface Booking {
   createdAt: string
 }
 
+
+export interface UpcomingBookingDisplay {
+  salonId: string
+  salonName: string
+  services: BookingService[]
+  barberName: string
+  date: string
+  time: string
+  totalPrice: number
+  status: BookingStatus
+}
+
+
 export interface User {
   id: string
   name: string

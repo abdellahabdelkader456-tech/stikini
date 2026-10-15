@@ -1274,6 +1274,7 @@ const refreshPublicUpcomingBookings = useCallback(async () => {
 
     const displayBookings: UpcomingBookingDisplay[] = (data ?? []).map(
       (row: any) => ({
+       salonId: String(row.salon_id ?? ''),
         salonName: String(row.salon_name ?? ''),
         services: Array.isArray(row.services)
           ? row.services.map((service: any) => ({

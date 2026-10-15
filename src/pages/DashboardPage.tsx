@@ -473,7 +473,7 @@ export default function DashboardPage() {
                       : upcomingBookings.slice(0, 3)
                     ).map((booking, index) => (
                       <motion.div
-                        key={booking.id}
+                       key={`${booking.salonId}-${booking.date}-${booking.time}-${booking.barberName}-${index}`}
                         initial={{ opacity: 0, y: 18 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{
@@ -534,13 +534,6 @@ export default function DashboardPage() {
 
                             <p className="mt-3 text-gold font-black text-[18px]">
                               {formatPrice(booking.totalPrice)} دج
-                            </p>
-
-                            <p
-                              className="mt-1 text-cream/32 text-[9px]"
-                              dir="ltr"
-                            >
-                              {booking.code}
                             </p>
                           </div>
                         </div>

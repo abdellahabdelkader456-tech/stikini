@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams, Navigate, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
+import { supabase } from '../lib/supabase'
 import {
   ArrowLeft,
   ArrowRight,
@@ -72,20 +73,78 @@ const salon = salons.find((s) => s.slug === slug)
   const days = useMemo(() => getUpcomingDays(14), [])
 
   // الأوقات المحجوزة فعلياً لنفس الحلاق ونفس اليوم في هذا الصالون (لأي زبون، وليس المستخدم الحالي فقط)
-  const bookedTimesForSelection = useMemo(() => {
-    if (!salon || !selectedBarber || !date) return new Set<string>()
-    return new Set(
-      publicUpcomingBookings
-        .filter(
-          (b) =>
-            b.salonId === salon.id &&
-            b.barberName === selectedBarber &&
-            b.date === date &&
-            b.status === 'مؤكد',
-        )
-        .map((b) => b.time),
+ 
+  // الأوقات المتعارضة لنفس الصالون والحلاق والتاريخ
+  const unavailableTimesForSelection = useMemo(() => {
+    if (!salon || !selectedBarber || !date) {
+      return new Set<string>()
+    }
+
+    const toMinutes = (value: string) => {
+      const [hours, minutes] = value.slice(0, 5).split(':').map(Number)
+      return hours * 60 + minutes
+    }
+
+    const requestedDuration = salon.services
+      .filter((service) => selectedServices.includes(service.id))
+      .reduce((sum, service) => sum + Number(service.duration || 0), 0)
+
+    const bookings = publicUpcomingBookings.filter(
+      (booking) =>
+        booking.salonId === salon.id &&
+        booking.barberName === selectedBarber &&
+        booking.date === date &&
+        booking.status === 'مؤكد',
     )
-  }, [publicUpcomingBookings, salon, selectedBarber, date])
+
+    const unavailable = new Set<string>()
+
+    for (const slot of TIME_SLOTS) {
+      const slotStart = toMinutes(slot)
+      const slotEnd = slotStart + requestedDuration
+
+      const overlaps = bookings.some((booking) => {
+        const existingStart = toMinutes(booking.time)
+
+        // منع وقت البداية المحجوز
+        if (booking.time.slice(0, 5) === slot.slice(0, 5)) {
+          return true
+        }
+
+        const existingDuration = Array.isArray(booking.services)
+          ? booking.services.reduce(
+              (sum, service) =>
+                sum + Number(service.duration || 0),
+              0,
+            )
+          : 0
+
+        // إذا كانت المدة غير متوفرة، لا نفحص التداخل إلا عند تطابق البداية
+        if (existingDuration <= 0 || requestedDuration <= 0) {
+          return false
+        }
+
+        const existingEnd = existingStart + existingDuration
+
+        return (
+          slotStart < existingEnd &&
+          existingStart < slotEnd
+        )
+      })
+
+      if (overlaps) {
+        unavailable.add(slot)
+      }
+    }
+
+    return unavailable
+  }, [
+    publicUpcomingBookings,
+    salon,
+    selectedBarber,
+    date,
+    selectedServices,
+  ])
 
 useEffect(() => {
   if (!salon || !date) {
@@ -119,12 +178,47 @@ useEffect(() => {
   }
 }, [salon?.id, date, refreshPublicUpcomingBookings])
 
+
+useEffect(() => {
+  if (!user) return
+
+  const channel = supabase
+    .channel('booking-availability', {
+      config: { private: true },
+    })
+    .on(
+      'broadcast',
+      { event: 'availability_changed' },
+      () => {
+        void refreshPublicUpcomingBookings()
+      },
+    )
+    .subscribe((status) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        console.warn(
+          'Booking availability Realtime connection issue:',
+          status,
+        )
+      }
+    })
+
+  return () => {
+    void supabase.removeChannel(channel)
+  }
+}, [user, refreshPublicUpcomingBookings])
+
+
+
   useEffect(() => {
-    if (time && bookedTimesForSelection.has(time)) {
+    if (time && unavailableTimesForSelection.has(time)) {
       setTime('')
-      setErrors((e) => ({ ...e, time: 'تم حجز هذا التوقيت للتو، يرجى اختيار توقيت آخر' }))
+      setErrors((e) => ({
+        ...e,
+        time: 'هذا التوقيت يتعارض مع حجز آخر، يرجى اختيار توقيت مختلف',
+      }))
     }
-  }, [time, bookedTimesForSelection])
+  }, [time, unavailableTimesForSelection])
+
 
   const chosenServices = useMemo(
     () => salon?.services.filter((s) => selectedServices.includes(s.id)) ?? [],
@@ -745,7 +839,7 @@ useEffect(() => {
 
                         <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-3">
                           {TIME_SLOTS.map((slot) => {
-                           const isBooked = bookedTimesForSelection.has(slot)
+                          const isBooked = unavailableTimesForSelection.has(slot)
 const isDisabled = isBooked || !availabilityLoaded
                             return (
                               <button

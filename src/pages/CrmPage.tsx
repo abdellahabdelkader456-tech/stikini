@@ -58,6 +58,7 @@ type Appointment = {
   date: string | null
   time: string | null
   client_name: string | null
+   notes: string | null
   phone: string | null
   total_price: number
   status: string | null
@@ -240,6 +241,7 @@ export default function CrmPage() {
           time: row.time ?? null,
           client_name: row.client_name ?? null,
           phone: row.phone ?? null,
+          notes: row.notes ?? null,
           total_price: Number(row.total_price ?? 0),
           status: row.status ?? null,
         })),
@@ -763,6 +765,16 @@ async function handleBookingStatusChange(
                       </div>
                     </div>
                     {appointment.phone && <p className="mt-3 text-xs text-cream/45">هاتف العميل: {appointment.phone}</p>}
+                    {appointment.notes?.trim() && (
+  <div className="mt-4 rounded-xl border border-gold/15 bg-gold/[0.04] p-4">
+    <p className="mb-2 text-xs font-semibold text-gold">
+      ملاحظات الزبون
+    </p>
+    <p className="whitespace-pre-wrap break-words text-sm leading-6 text-cream/80">
+      {appointment.notes}
+    </p>
+  </div>
+)}
                     {appointment.status === 'مؤكد' && (
   <div className="mt-5 flex flex-wrap gap-3 border-t border-gold/10 pt-4">
     <button

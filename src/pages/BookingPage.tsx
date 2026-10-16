@@ -30,7 +30,6 @@ import {
   TIME_SLOTS,
   isValidName,
   isValidPhone,
-  isValidEmail,
 } from '../lib/utils'
 import type { Booking } from '../lib/types'
 
@@ -64,7 +63,6 @@ const salon = salons.find((s) => s.slug === slug)
   const [time, setTime] = useState('')
   const [name, setName] = useState(user?.name ?? '')
   const [phone, setPhone] = useState(user?.phone ?? '')
-  const [email, setEmail] = useState(user?.email ?? '')
   const [notes, setNotes] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
@@ -262,12 +260,17 @@ useEffect(() => {
       if (!time) newErrors.time = 'يرجى اختيار التوقيت'
     }
 
-    if (current === 2) {
-      if (!isValidName(name)) newErrors.name = 'يرجى إدخال اسمك الكامل (3 أحرف على الأقل)'
-      if (!isValidPhone(phone)) newErrors.phone = 'يرجى إدخال رقم هاتف صحيح (مثال: 0550123456)'
-      if (email.trim() && !isValidEmail(email))
-        newErrors.email = 'يرجى إدخال بريد إلكتروني صحيح'
-    }
+ 
+if (current === 2) {
+  if (!isValidName(name)) {
+    newErrors.name = 'يرجى إدخال اسمك الكامل (3 أحرف على الأقل)'
+  }
+
+  if (!isValidPhone(phone)) {
+    newErrors.phone = 'يرجى إدخال رقم هاتف صحيح (مثال: 0550123456)'
+  }
+}
+
 
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
@@ -305,7 +308,7 @@ useEffect(() => {
       time,
       clientName: name.trim(),
       phone: phone.trim(),
-      email: email.trim(),
+      email: '',
       notes: notes.trim(),
     })
 
@@ -900,17 +903,6 @@ const isDisabled = isBooked || !availabilityLoaded
                           required
                           dir="ltr"
                         />
-                        <div className="sm:col-span-2">
-                          <Field
-                            label="البريد الإلكتروني"
-                            icon={MessageCircle}
-                            value={email}
-                            onChange={setEmail}
-                            placeholder="example@email.com"
-                            error={errors.email}
-                            dir="ltr"
-                          />
-                        </div>
 
                         <div className="sm:col-span-2">
                           <label className="block text-cream/62 text-[12px] font-semibold mb-2.5">

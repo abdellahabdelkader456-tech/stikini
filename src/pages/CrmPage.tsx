@@ -946,7 +946,7 @@ async function handleBookingStatusChange(
             <div className="mx-auto flex w-fit justify-center rounded-2xl bg-white p-4">
               <QRCodeSVG
                 id="owner-salon-booking-qr"
-                value={`${window.location.origin}/booking/${encodeURIComponent(createOwnerSalonSlug(salon.name, salon.id))}`}
+                value={`${window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 'http://192.168.1.4:5173' : window.location.origin}/booking/${encodeURIComponent(createOwnerSalonSlug(salon.name, salon.id))}`}
                 size={256}
                 level="H"
                 includeMargin
@@ -955,9 +955,9 @@ async function handleBookingStatusChange(
               />
             </div>
 
-            <p className="break-all text-xs text-cream/60" dir="ltr">
-            {`${window.location.origin}/booking/${encodeURIComponent(createOwnerSalonSlug(salon.name, salon.id))}`}
-            </p>
+           <p className="break-all text-xs text-cream/60" dir="ltr">
+  {`${window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 'http://192.168.1.4:5173' : window.location.origin}/booking/${encodeURIComponent(createOwnerSalonSlug(salon.name, salon.id))}`}
+</p>
 
             <div className="flex flex-col gap-3 sm:flex-row">
               <button

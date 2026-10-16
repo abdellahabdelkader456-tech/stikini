@@ -2169,19 +2169,23 @@ if (error || data?.ok !== true) {
 
             <div className="my-6 inline-block rounded-2xl bg-white p-4">
               <QRCodeSVG
-                id="salon-booking-qr"
-                value={`${window.location.origin}/booking/${encodeURIComponent(qrSalon.slug)}`}
-                size={256}
-                level="H"
-                includeMargin
-                bgColor="#ffffff"
-                fgColor="#111111"
-              />
+  id="salon-booking-qr"
+  value={`${window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    ? 'http://192.168.1.4:5173'
+    : window.location.origin}/booking/${encodeURIComponent(qrSalon.slug)}`}
+  size={256}
+  level="H"
+  includeMargin
+  bgColor="#ffffff"
+  fgColor="#111111"
+/>
             </div>
 
             <p className="mb-5 break-all text-xs leading-5 text-cream/50" dir="ltr">
-              {`${window.location.origin}/booking/${encodeURIComponent(qrSalon.slug)}`}
-            </p>
+  {`${window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    ? 'http://192.168.1.4:5173'
+    : window.location.origin}/booking/${encodeURIComponent(qrSalon.slug)}`}
+</p>
 
             <div className="flex gap-3">
               <button

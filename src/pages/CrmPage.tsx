@@ -1,6 +1,7 @@
 import { ChangeEvent, FormEvent, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { QRCodeSVG } from 'qrcode.react'
+import { getStandardServiceLabel } from '../lib/serviceLabels'
 import {
   ArrowRight,
   CalendarDays,
@@ -39,6 +40,13 @@ type Service = {
   price: number
   duration: number
 }
+
+const STANDARD_SERVICES = [
+  'Haircut / قصة شعر',
+  'Hair treatment / علاج الشعر',
+  'Beard / لحية',
+  'Other service / خدمات أخرى',
+] as const
 
 type Barber = {
   id: string
@@ -365,66 +373,86 @@ async function handleBookingStatusChange(
 }
 
   async function addService(event: FormEvent) {
-    event.preventDefault()
+  event.preventDefault()
 
-    if (!salon) return
+  if (!salon) return
 
-    const price = Number(serviceForm.price)
-    const duration = Number(serviceForm.duration)
+  const serviceName = serviceForm.name.trim()
+  const price = Number(serviceForm.price)
+  const duration = Number(serviceForm.duration)
 
-    if (!serviceForm.name.trim()) {
-      showToast('أدخل اسم الخدمة', 'error')
-      return
-    }
-
-    if (!Number.isFinite(price) || price < 0) {
-      showToast('أدخل سعراً صحيحاً', 'error')
-      return
-    }
-
-    if (!Number.isFinite(duration) || duration <= 0) {
-      showToast('أدخل مدة صحيحة', 'error')
-      return
-    }
-
-    setSaving(true)
-
-    try {
-      const { data, error } = await supabase
-        .from('salon_services')
-        .insert({
-          salon_id: salon.id,
-          name: serviceForm.name.trim(),
-          description: serviceForm.description.trim() || null,
-          category: serviceForm.category.trim() || null,
-          price,
-          duration,
-        })
-        .select('id,name,description,category,price,duration')
-        .single()
-
-      if (error) throw error
-
-      setServices((current) => [...current, data as Service].sort((a, b) =>
-        a.name.localeCompare(b.name, 'ar'),
-      ))
-
-      setServiceForm({
-        name: '',
-        description: '',
-        category: '',
-        price: '',
-        duration: '30',
-      })
-      setServiceModal(false)
-      showToast('تمت إضافة الخدمة بنجاح', 'success')
-    } catch (error) {
-      console.error('Add service error:', error)
-      showToast('تعذر إضافة الخدمة', 'error')
-    } finally {
-      setSaving(false)
-    }
+  if (!STANDARD_SERVICES.some((name) => name === serviceName)) {
+    showToast('يرجى اختيار خدمة من القائمة', 'error')
+    return
   }
+
+  if (services.some((service) => service.name === serviceName)) {
+    showToast('هذه الخدمة مضافة بالفعل إلى صالونك', 'error')
+    return
+  }
+
+  if (!Number.isFinite(price) || price < 0) {
+    showToast('أدخل سعراً صحيحاً', 'error')
+    return
+  }
+
+  if (!Number.isFinite(duration) || duration <= 0) {
+    showToast('أدخل مدة صحيحة', 'error')
+    return
+  }
+
+  setSaving(true)
+
+  try {
+    const { data: existingServices, error: checkError } = await supabase
+      .from('salon_services')
+      .select('name')
+      .eq('salon_id', salon.id)
+
+    if (checkError) throw checkError
+
+    if (existingServices?.some((service) => service.name === serviceName)) {
+      showToast('هذه الخدمة مضافة بالفعل إلى صالونك', 'error')
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('salon_services')
+      .insert({
+        salon_id: salon.id,
+        name: serviceName,
+        description: serviceForm.description.trim() || null,
+        category: serviceName,
+        price,
+        duration,
+      })
+      .select('id,name,description,category,price,duration')
+      .single()
+
+    if (error) throw error
+
+    setServices((current) =>
+      [...current, data as Service].sort((a, b) =>
+        a.name.localeCompare(b.name, 'ar'),
+      ),
+    )
+
+    setServiceForm({
+      name: '',
+      description: '',
+      category: '',
+      price: '',
+      duration: '30',
+    })
+    setServiceModal(false)
+    showToast('تمت إضافة الخدمة بنجاح', 'success')
+  } catch (error) {
+    console.error('Add service error:', error)
+    showToast('تعذر إضافة الخدمة', 'error')
+  } finally {
+    setSaving(false)
+  }
+}
 
   async function addBarber(event: FormEvent) {
     event.preventDefault()
@@ -723,10 +751,20 @@ async function handleBookingStatusChange(
           ) : (
             <div className="divide-y divide-white/5">
               {appointments.map((appointment) => {
-                const serviceNames = appointment.services
-                  .map((service) => typeof service === 'string' ? service : service.name || '')
-                  .filter(Boolean)
-                  .join('، ')
+              const serviceNames = appointment.services
+  .map((service) => {
+    if (typeof service === 'string') {
+      return service
+        ? getStandardServiceLabel({ name: service })
+        : ''
+    }
+
+    return service.name
+      ? getStandardServiceLabel({ name: service.name })
+      : ''
+  })
+  .filter(Boolean)
+  .join('، ')
 
                 return (
                   <article key={appointment.id} className="p-5 sm:p-6">
@@ -823,13 +861,26 @@ async function handleBookingStatusChange(
               <h2 className="text-xl font-bold text-cream">الخدمات</h2>
               <p className="text-sm text-cream/60 mt-1">أضف الخدمات والأسعار التي يقدمها صالونك.</p>
             </div>
-            <button
-              onClick={() => setServiceModal(true)}
-              className="inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2.5 text-white font-semibold hover:bg-gold/90"
-            >
-              <Plus className="w-4 h-4" />
-              إضافة خدمة
-            </button>
+          <button
+  type="button"
+  onClick={() => {
+    setServiceForm({
+      name: '',
+      description: '',
+      category: '',
+      price: '',
+      duration: '30',
+    })
+    setServiceModal(true)
+  }}
+  disabled={STANDARD_SERVICES.every((name) =>
+    services.some((service) => service.name === name),
+  )}
+  className="inline-flex items-center gap-2 rounded-xl bg-gold px-4 py-2.5 text-white font-semibold hover:bg-gold/90 disabled:opacity-40 disabled:cursor-not-allowed"
+>
+  <Plus className="w-4 h-4" />
+  إضافة خدمة
+</button>
           </div>
 
           {services.length === 0 ? (
@@ -985,19 +1036,44 @@ async function handleBookingStatusChange(
       {serviceModal && (
         <Modal title="إضافة خدمة" onClose={() => setServiceModal(false)}>
           <form onSubmit={addService} className="space-y-4">
-            <Input
-              label="اسم الخدمة"
-              value={serviceForm.name}
-              onChange={(value) => setServiceForm((f) => ({ ...f, name: value }))}
-              placeholder="مثال: قص الشعر"
-              required
-            />
-            <Input
-              label="الفئة"
-              value={serviceForm.category}
-              onChange={(value) => setServiceForm((f) => ({ ...f, category: value }))}
-              placeholder="مثال: شعر"
-            />
+           <div>
+  <label className="mb-2 block text-sm font-medium text-cream">
+    نوع الخدمة *
+  </label>
+
+  <select
+    value={serviceForm.name}
+    onChange={(event) =>
+      setServiceForm((current) => ({
+        ...current,
+        name: event.target.value,
+        category: event.target.value,
+      }))
+    }
+    required
+    className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-cream outline-none focus:border-gold"
+  >
+    <option value="" disabled>
+      اختر نوع الخدمة
+    </option>
+
+    {STANDARD_SERVICES.map((name) => {
+      const alreadyAdded = services.some(
+        (service) => service.name === name,
+      )
+
+      return (
+        <option
+          key={name}
+          value={name}
+          disabled={alreadyAdded}
+        >
+          {alreadyAdded ? `${name} — مضافة بالفعل` : name}
+        </option>
+      )
+    })}
+  </select>
+</div>
             <div className="grid grid-cols-2 gap-3">
               <Input
                 label="السعر (دج)"

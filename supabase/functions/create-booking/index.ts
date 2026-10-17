@@ -95,6 +95,8 @@ Deno.serve(async (req) => {
       phone,
       email,
       notes,
+      hairStyle,
+      beardStyle,
     } = input
 
     if (
@@ -323,6 +325,14 @@ Deno.serve(async (req) => {
         price: Number(service.price),
         duration: Number(service.duration),
       })),
+            hair_style:
+        hairStyle && typeof hairStyle === 'object' && !Array.isArray(hairStyle)
+          ? hairStyle
+          : null,
+      beard_style:
+        beardStyle && typeof beardStyle === 'object' && !Array.isArray(beardStyle)
+          ? beardStyle
+          : null,
       barber_name: barber.name,
       date,
       time,

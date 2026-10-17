@@ -3,7 +3,7 @@ import { FormEvent, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { motion } from 'framer-motion'
-
+import { getStandardServiceLabel } from '../lib/serviceLabels'
 import {
   Calendar,
   Clock,
@@ -516,7 +516,7 @@ export default function DashboardPage() {
                                     key={service.id}
                                     className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/8 text-cream/52 text-[9.5px] font-semibold"
                                   >
-                                    {service.name}
+                                   {getStandardServiceLabel(service)}
                                   </span>
                                 ))}
                               </div>
@@ -788,8 +788,8 @@ export default function DashboardPage() {
                                   key={service.id}
                                   className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/8 text-cream/52 text-[9.5px] font-semibold"
                                 >
-                                  {service.name} —{' '}
-                                  {formatPrice(service.price)} دج
+                                  {getStandardServiceLabel(service)} —{' '}
+{formatPrice(service.price)} دج
                                 </span>
                               ))}
                             </div>

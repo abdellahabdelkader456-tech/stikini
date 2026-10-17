@@ -13,6 +13,7 @@ import type {
   Booking,
   BookingService,
   BookingStatus,
+  BookingStyleSelection,
   Salon,
   SalonService,
   ToastItem,
@@ -53,6 +54,8 @@ export interface NewBookingInput {
   salonId: string
   salonName: string
   services: BookingService[]
+  hairStyle?: BookingStyleSelection | null
+  beardStyle?: BookingStyleSelection | null
   barberName: string
   date: string
   time: string
@@ -248,6 +251,8 @@ function mapBooking(row: any): Booking {
     salonId: String(row.salon_id ?? ''),
     salonName: String(row.salon_name ?? ''),
     services,
+    hairStyle: row.hair_style ?? null,
+beardStyle: row.beard_style ?? null,
     barberName: String(row.barber_name ?? ''),
     date: String(row.date ?? ''),
     time: String(row.time ?? ''),
@@ -1628,6 +1633,9 @@ const register = useCallback(
               phone: input.phone,
               email: input.email,
               notes: input.notes,
+              hairStyle: input.hairStyle ?? null,
+              beardStyle: input.beardStyle ?? null,
+
             },
           },
         )

@@ -12,6 +12,7 @@ import {
 import type { Salon } from '../lib/types'
 import { useStore } from '../lib/store'
 import { cn, formatPrice } from '../lib/utils'
+import { getStandardServiceLabel } from '../lib/serviceLabels'
 
 export function Stars({
   rating,
@@ -176,7 +177,7 @@ export function SalonCard({ salon, index = 0 }: { salon: Salon; index?: number }
               key={s.id}
               className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/8 text-cream/60 text-[11.5px]"
             >
-              {s.name}
+             {getStandardServiceLabel(s)}
             </span>
           ))}
           {salon.services.length > 3 && (

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useParams, Navigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { getStandardServiceLabel } from '../lib/serviceLabels'
 import {
   ArrowLeft,
   MapPin,
@@ -347,7 +348,7 @@ const salon = salons.find((s) => s.slug === slug)
                       <CalendarCheck className="w-5 h-5 text-gold" />
                     </div>
                     <h3 className="mt-5 text-[17px] font-black text-cream group-hover:text-gold transition-colors">
-                      {service.name}
+                     {getStandardServiceLabel(service)}
                     </h3>
                     <p className="mt-2.5 text-cream/50 text-[12px] font-semibold">
                       {service.category}

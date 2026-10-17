@@ -66,6 +66,40 @@ export interface BookingService {
   duration: number
 }
 
+
+export type StyleCategory =
+  | 'fade'
+  | 'classic'
+  | 'modern'
+  | 'curly'
+  | 'long'
+  | 'short'
+  | 'beard'
+  | 'mustache'
+  | 'other'
+  | 'boxed'
+  | 'full'
+  | 'goatee'
+  | 'styled'
+  | 'natural'
+
+
+export interface StyleOption {
+  id: string
+  name: string
+  nameAr: string
+  category: StyleCategory
+  imageUrl: string
+  description?: string
+}
+
+export interface BookingStyleSelection {
+  styleId: string
+  styleName: string
+  category: StyleCategory
+  imageUrl: string
+}
+
 export type BookingStatus = 'مؤكد' | 'ملغى' | 'مكتمل'
 
 export interface Booking {
@@ -74,6 +108,8 @@ export interface Booking {
   salonId: string
   salonName: string
   services: BookingService[]
+   hairStyle?: BookingStyleSelection | null
+  beardStyle?: BookingStyleSelection | null
   barberName: string
   date: string
   time: string

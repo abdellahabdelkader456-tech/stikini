@@ -3,6 +3,10 @@ import { Link, useParams, Navigate, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { supabase } from '../lib/supabase'
 import {
+  getStandardServiceCategory,
+  getStandardServiceLabel,
+} from '../lib/serviceLabels'
+import {
   ArrowLeft,
   ArrowRight,
   Calendar,
@@ -31,7 +35,7 @@ import {
   isValidName,
   isValidPhone,
 } from '../lib/utils'
-import type { Booking } from '../lib/types'
+import type { Booking, SalonService, StyleOption } from '../lib/types'
 
 const STEPS = [
   { key: 'services', label: 'الخدمات', icon: Scissors },
@@ -39,6 +43,251 @@ const STEPS = [
   { key: 'details', label: 'بياناتك', icon: User },
   { key: 'confirm', label: 'التأكيد', icon: CheckCircle2 },
 ]
+
+
+
+
+const isHairService = (service: SalonService): boolean => {
+  const type = getStandardServiceCategory(service)
+  return type === 'haircut' || type === 'hair-treatment'
+}
+
+const isBeardService = (service: SalonService): boolean => {
+  return getStandardServiceCategory(service) === 'beard'
+}
+
+
+
+const HAIR_STYLE_OPTIONS: StyleOption[] = [
+  {
+    id: 'hair-low-fade',
+    name: 'Low Fade',
+    nameAr: 'تدرّج منخفض',
+    category: 'fade',
+    imageUrl: '/images/hair-low-fade.jpg',
+    description: 'تدرّج منخفض على جانبي الرأس مع شعر علوي مرتب',
+  },
+  {
+    id: 'hair-mid-fade',
+    name: 'Mid Fade',
+    nameAr: 'تدرّج متوسط',
+    category: 'fade',
+    imageUrl: '/images/hair-mid-fade.jpg',
+    description: 'تدرّج متوسط يناسب الإطلالات العصرية',
+  },
+  {
+    id: 'hair-high-fade',
+    name: 'High Fade',
+    nameAr: 'تدرّج مرتفع',
+    category: 'fade',
+    imageUrl: '/images/hair-high-fade.jpg',
+    description: 'تدرّج مرتفع مع فرق واضح بين الجانبين والأعلى',
+  },
+  {
+    id: 'hair-skin-fade',
+    name: 'Skin Fade',
+    nameAr: 'تدرّج حتى الجلد',
+    category: 'fade',
+    imageUrl: '/images/hair-skin-fade.jpg',
+    description: 'تدرّج قصير جدًا يصل إلى الجلد عند الجانبين',
+  },
+  {
+    id: 'hair-taper',
+    name: 'Classic Taper',
+    nameAr: 'تدرّج كلاسيكي',
+    category: 'classic',
+    imageUrl: '/images/hair-taper.jpg',
+    description: 'تدرّج ناعم وكلاسيكي حول الأذنين والرقبة',
+  },
+  {
+    id: 'hair-textured-crop',
+    name: 'Textured Crop',
+    nameAr: 'قصة قصيرة بملمس بارز',
+    category: 'modern',
+    imageUrl: '/images/hair-textured-crop.jpg',
+    description: 'شعر علوي قصير بملمس واضح وغرّة أمامية',
+  },
+  {
+    id: 'hair-french-crop',
+    name: 'French Crop',
+    nameAr: 'القصة الفرنسية',
+    category: 'modern',
+    imageUrl: '/images/hair-french-crop.jpg',
+    description: 'قصة قصيرة مع غرّة أمامية وجوانب مرتبة',
+  },
+  {
+    id: 'hair-quiff',
+    name: 'Quiff',
+    nameAr: 'كويف — شعر مرفوع للأمام',
+    category: 'modern',
+    imageUrl: '/images/hair-quiff.jpg',
+    description: 'شعر علوي مرفوع إلى الأمام مع حجم طبيعي',
+  },
+  {
+    id: 'hair-pompadour',
+    name: 'Pompadour',
+    nameAr: 'بومبادور',
+    category: 'classic',
+    imageUrl: '/images/hair-pompadour.jpg',
+    description: 'شعر علوي كثيف ومرفوع إلى الخلف',
+  },
+  {
+    id: 'hair-buzz-cut',
+    name: 'Buzz Cut',
+    nameAr: 'قصة عسكرية قصيرة',
+    category: 'short',
+    imageUrl: '/images/hair-buzz-cut.jpg',
+    description: 'شعر قصير جدًا بطول متقارب',
+  },
+  {
+    id: 'hair-crew-cut',
+    name: 'Crew Cut',
+    nameAr: 'قصة كرو كت',
+    category: 'short',
+    imageUrl: '/images/hair-crew-cut.jpg',
+    description: 'قصة قصيرة مع طول أكبر قليلًا في الأعلى',
+  },
+  {
+    id: 'hair-side-part',
+    name: 'Side Part',
+    nameAr: 'فرق جانبي',
+    category: 'classic',
+    imageUrl: '/images/hair-side-part.jpg',
+    description: 'تسريحة كلاسيكية مع فرق جانبي واضح',
+  },
+  {
+    id: 'hair-slick-back',
+    name: 'Slick Back',
+    nameAr: 'شعر مسحوب للخلف',
+    category: 'classic',
+    imageUrl: '/images/hair-slick-back.jpg',
+    description: 'شعر مرتب ومسرّح باتجاه الخلف',
+  },
+  {
+    id: 'hair-curly-top',
+    name: 'Curly Top',
+    nameAr: 'شعر علوي مجعّد',
+    category: 'curly',
+    imageUrl: '/images/hair-curly-top.jpg',
+    description: 'تجعيدات طبيعية في الأعلى مع جوانب مرتبة',
+  },
+  {
+    id: 'hair-undercut',
+    name: 'Undercut',
+    nameAr: 'أندركت',
+    category: 'modern',
+    imageUrl: '/images/hair-undercut.jpg',
+    description: 'جوانب قصيرة مع شعر علوي أطول',
+  },
+  {
+    id: 'hair-long-layered',
+    name: 'Long Layered Hair',
+    nameAr: 'شعر طويل بطبقات',
+    category: 'long',
+    imageUrl: '/images/hair-long-layered.jpg',
+    description: 'شعر طويل بطبقات لإبراز الحركة والحجم',
+  },
+]
+
+const BEARD_STYLE_OPTIONS: StyleOption[] = [
+  {
+    id: 'beard-stubble',
+    name: 'Stubble',
+    nameAr: 'لحية خفيفة جدًا',
+    category: 'short',
+    imageUrl: '/images/beard-stubble.jpg',
+    description: 'شعيرات قصيرة جدًا بمظهر طبيعي',
+  },
+  {
+    id: 'beard-short',
+    name: 'Short Beard',
+    nameAr: 'لحية قصيرة',
+    category: 'short',
+    imageUrl: '/images/beard-short.jpg',
+    description: 'لحية قصيرة ومرتبة',
+  },
+  {
+    id: 'beard-short-boxed',
+    name: 'Short Boxed Beard',
+    nameAr: 'لحية قصيرة محددة',
+    category: 'boxed',
+    imageUrl: '/images/beard-short-boxed.jpg',
+    description: 'لحية قصيرة مع حدود واضحة على الخدين والرقبة',
+  },
+  {
+    id: 'beard-full',
+    name: 'Full Beard',
+    nameAr: 'لحية كاملة',
+    category: 'full',
+    imageUrl: '/images/beard-full.jpg',
+    description: 'لحية كثيفة تغطي الذقن والخدين',
+  },
+  {
+    id: 'beard-rounded',
+    name: 'Rounded Beard',
+    nameAr: 'لحية مستديرة',
+    category: 'full',
+    imageUrl: '/images/beard-rounded.jpg',
+    description: 'لحية كاملة بحواف مستديرة',
+  },
+  {
+    id: 'beard-goatee',
+    name: 'Goatee',
+    nameAr: 'سكسوكة',
+    category: 'goatee',
+    imageUrl: '/images/beard-goatee.jpg',
+    description: 'شعر متركز حول الذقن',
+  },
+  {
+    id: 'beard-van-dyke',
+    name: 'Van Dyke',
+    nameAr: 'فان دايك',
+    category: 'goatee',
+    imageUrl: '/images/beard-van-dyke.jpg',
+    description: 'سكسوكة مع شارب منفصل',
+  },
+  {
+    id: 'beard-balbo',
+    name: 'Balbo',
+    nameAr: 'لحية بالبو',
+    category: 'styled',
+    imageUrl: '/images/beard-balbo.jpg',
+    description: 'لحية ذقن مشذبة مع شارب منفصل',
+  },
+  {
+    id: 'beard-anchor',
+    name: 'Anchor Beard',
+    nameAr: 'لحية المرساة',
+    category: 'styled',
+    imageUrl: '/images/beard-anchor.jpg',
+    description: 'لحية محددة تمتد حول الذقن بشكل يشبه المرساة',
+  },
+  {
+    id: 'beard-circle',
+    name: 'Circle Beard',
+    nameAr: 'لحية دائرية',
+    category: 'styled',
+    imageUrl: '/images/beard-circle.jpg',
+    description: 'شارب متصل بلحية الذقن لتكوين شكل دائري',
+  },
+  {
+    id: 'beard-chevron',
+    name: 'Chevron Moustache',
+    nameAr: 'شارب شيفرون',
+    category: 'mustache',
+    imageUrl: '/images/beard-chevron.jpg',
+    description: 'شارب كثيف يمتد فوق الشفة العليا',
+  },
+  {
+    id: 'beard-natural',
+    name: 'Natural Beard',
+    nameAr: 'لحية طبيعية',
+    category: 'natural',
+    imageUrl: '/images/beard-natural.jpg',
+    description: 'لحية طبيعية مع تشذيب خفيف',
+  },
+]
+
 
 export default function BookingPage() {
  const { slug } = useParams()
@@ -64,6 +313,11 @@ const salon = salons.find((s) => s.slug === slug)
   const [name, setName] = useState(user?.name ?? '')
   const [phone, setPhone] = useState(user?.phone ?? '')
   const [notes, setNotes] = useState('')
+  const [selectedHairStyle, setSelectedHairStyle] =
+  useState<StyleOption | null>(null)
+
+const [selectedBeardStyle, setSelectedBeardStyle] =
+  useState<StyleOption | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
   const [confirmedBooking, setConfirmedBooking] = useState<Booking | null>(null)
@@ -222,7 +476,8 @@ useEffect(() => {
     () => salon?.services.filter((s) => selectedServices.includes(s.id)) ?? [],
     [salon, selectedServices],
   )
-
+const showHairStyles = chosenServices.some(isHairService)
+const showBeardStyles = chosenServices.some(isBeardService)
   const subtotalPrice = chosenServices.reduce((sum, s) => sum + s.price, 0)
   const totalPrice = subtotalPrice
   const totalDuration = chosenServices.reduce((sum, s) => sum + s.duration, 0)
@@ -239,12 +494,43 @@ useEffect(() => {
     return <Navigate to="/salons" replace />
   }
 
-  const toggleService = (id: string) => {
-    setSelectedServices((prev) =>
-      prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id],
-    )
-    setErrors((e) => ({ ...e, services: '' }))
+ const toggleService = (id: string) => {
+  const service = salon?.services.find((item) => item.id === id)
+
+  if (!service) return
+
+  const isSelected = selectedServices.includes(id)
+
+  if (isSelected) {
+    const remainingServices =
+      salon?.services.filter(
+        (item) =>
+          selectedServices.includes(item.id) && item.id !== id,
+      ) ?? []
+
+    if (
+      isHairService(service) &&
+      !remainingServices.some(isHairService)
+    ) {
+      setSelectedHairStyle(null)
+    }
+
+    if (
+      isBeardService(service) &&
+      !remainingServices.some(isBeardService)
+    ) {
+      setSelectedBeardStyle(null)
+    }
   }
+
+  setSelectedServices((prev) =>
+    isSelected
+      ? prev.filter((serviceId) => serviceId !== id)
+      : [...prev, id],
+  )
+
+  setErrors((errors) => ({ ...errors, services: '' }))
+}
 
   const validateStep = (current: number): boolean => {
     const newErrors: Record<string, string> = {}
@@ -308,8 +594,26 @@ if (current === 2) {
       time,
       clientName: name.trim(),
       phone: phone.trim(),
-      email: '',
-      notes: notes.trim(),
+     email: '',
+notes: notes.trim(),
+
+hairStyle: selectedHairStyle
+  ? {
+      styleId: selectedHairStyle.id,
+      styleName: selectedHairStyle.nameAr,
+      category: selectedHairStyle.category,
+      imageUrl: selectedHairStyle.imageUrl,
+    }
+  : null,
+
+beardStyle: selectedBeardStyle
+  ? {
+      styleId: selectedBeardStyle.id,
+      styleName: selectedBeardStyle.nameAr,
+      category: selectedBeardStyle.category,
+      imageUrl: selectedBeardStyle.imageUrl,
+    }
+  : null,
     })
 
     setSubmitting(false)
@@ -423,7 +727,9 @@ if (current === 2) {
                       >
                         <div className="flex items-center gap-2.5">
                           <CheckCircle2 className="w-4 h-4 text-emerald-brand shrink-0" />
-                          <span className="text-cream/72 text-[13px]">{s.name}</span>
+                          <span className="text-cream/72 text-[13px]">
+  {getStandardServiceLabel(s)}
+</span>
                         </div>
                         <div className="flex items-center gap-3 shrink-0">
                           <span className="text-cream/38 text-[10.5px]">
@@ -657,9 +963,9 @@ if (current === 2) {
                                     </span>
                                     <div className="flex-1 min-w-0">
                                       <div className="flex items-center gap-2 flex-wrap">
-                                        <h3 className="text-cream text-[14px] font-bold">
-                                          {service.name}
-                                        </h3>
+                                       <h3 className="text-cream text-[14px] font-bold">
+  {getStandardServiceLabel(service)}
+</h3>
                                         {service.popular && (
                                           <span className="px-2 py-0.5 rounded-md bg-gold/14 border border-gold/22 text-gold text-[9px] font-black">
                                             مميزة
@@ -696,6 +1002,100 @@ if (current === 2) {
                           })}
                         </div>
                       </div>
+
+{/* Hair styles: visible only when a hair service is selected */}
+{showHairStyles && (
+  <div className="mt-6">
+    <h3 className="text-cream font-bold mb-3">
+      اختر قصة الشعر
+    </h3>
+
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+      {HAIR_STYLE_OPTIONS.map((style) => {
+        const selected = selectedHairStyle?.id === style.id
+
+        return (
+          <button
+            key={style.id}
+            type="button"
+            aria-pressed={selected}
+            onClick={() =>
+              setSelectedHairStyle(selected ? null : style)
+            }
+            className={cn(
+              'overflow-hidden rounded-2xl border text-right transition-all',
+              selected
+                ? 'border-gold bg-gold/10 shadow-gold-soft'
+                : 'border-white/10 bg-white/3 hover:border-gold/40',
+            )}
+          >
+            <img
+              src={style.imageUrl}
+              alt={style.nameAr}
+              className="w-full h-36 object-cover"
+            />
+
+            <div className="p-3">
+              <p className="text-cream text-[12px] font-bold">
+                {style.nameAr}
+              </p>
+              <p className="text-cream/40 text-[10px] mt-1">
+                {selected ? 'تم الاختيار ✓' : 'اضغط للاختيار'}
+              </p>
+            </div>
+          </button>
+        )
+      })}
+    </div>
+  </div>
+)}
+
+{/* Beard styles: visible only when a beard service is selected */}
+{showBeardStyles && (
+  <div className="mt-6">
+    <h3 className="text-cream font-bold mb-3">
+      اختر شكل اللحية
+    </h3>
+
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+      {BEARD_STYLE_OPTIONS.map((style) => {
+        const selected = selectedBeardStyle?.id === style.id
+
+        return (
+          <button
+            key={style.id}
+            type="button"
+            aria-pressed={selected}
+            onClick={() =>
+              setSelectedBeardStyle(selected ? null : style)
+            }
+            className={cn(
+              'overflow-hidden rounded-2xl border text-right transition-all',
+              selected
+                ? 'border-gold bg-gold/10 shadow-gold-soft'
+                : 'border-white/10 bg-white/3 hover:border-gold/40',
+            )}
+          >
+            <img
+              src={style.imageUrl}
+              alt={style.nameAr}
+              className="w-full h-36 object-cover"
+            />
+
+            <div className="p-3">
+              <p className="text-cream text-[12px] font-bold">
+                {style.nameAr}
+              </p>
+              <p className="text-cream/40 text-[10px] mt-1">
+                {selected ? 'تم الاختيار ✓' : 'اضغط للاختيار'}
+              </p>
+            </div>
+          </button>
+        )
+      })}
+    </div>
+  </div>
+)}
 
                       {/* Barber selection */}
                       <div>
@@ -903,10 +1303,10 @@ const isDisabled = isBooked || !availabilityLoaded
                           required
                           dir="ltr"
                         />
-
+                        
                         <div className="sm:col-span-2">
                           <label className="block text-cream/62 text-[12px] font-semibold mb-2.5">
-                            ملاحظات أو ستايل مفضل (اختياري)
+                           ملاحظات إضافية (اختياري)
                           </label>
                           <textarea
                             value={notes}

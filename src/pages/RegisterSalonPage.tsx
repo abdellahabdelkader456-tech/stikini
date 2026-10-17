@@ -7,6 +7,13 @@ type Service = {
   duration: string
 }
 
+const STANDARD_SERVICES = [
+  'Haircut / قصة شعر',
+  'Hair treatment / علاج الشعر',
+  'Beard / لحية',
+  'Other service / خدمات أخرى',
+] as const
+
 type Barber = {
   name: string
   experience: string
@@ -93,9 +100,7 @@ export default function RegisterSalonPage() {
   })
 
   // STEP 2
-  const [services, setServices] = useState<Service[]>([
-    { name: '', price: '', duration: '15' },
-  ])
+  const [services, setServices] = useState<Service[]>([])
 
   // STEP 3 — BARBERS
   const [barbers, setBarbers] = useState<Barber[]>([
@@ -130,12 +135,24 @@ export default function RegisterSalonPage() {
     )
   }
 
-  const addService = () => {
-    setServices((prev) => [
+ const addService = () => {
+  setServices((prev) => {
+    const nextService = STANDARD_SERVICES.find(
+      (name) => !prev.some((service) => service.name === name),
+    )
+
+    if (!nextService) return prev
+
+    return [
       ...prev,
-      { name: '', price: '', duration: '15' },
-    ])
-  }
+      {
+        name: nextService,
+        price: '',
+        duration: '15',
+      },
+    ]
+  })
+}
 
   const removeService = (index: number) => {
     setServices((prev) => prev.filter((_, i) => i !== index))
@@ -184,17 +201,25 @@ export default function RegisterSalonPage() {
   }
 
   const handleStep2 = () => {
-    const hasIncompleteService = services.some(
-      (service) => !service.name.trim() || !service.price.trim(),
-    )
-
-    if (hasIncompleteService) {
-      alert('يرجى إكمال اسم وسعر كل خدمة قبل المتابعة.')
-      return
-    }
-
-    setStep(3)
+  if (services.length === 0) {
+    alert('يرجى اختيار خدمة واحدة على الأقل.')
+    return
   }
+
+  const hasIncompleteService = services.some(
+    (service) =>
+      !service.name.trim() ||
+      !service.price.trim() ||
+      Number(service.price) < 0,
+  )
+
+  if (hasIncompleteService) {
+    alert('يرجى إكمال اسم وسعر كل خدمة قبل المتابعة.')
+    return
+  }
+
+  setStep(3)
+}
 
   const handleStep3 = () => {
     const hasIncompleteBarber = barbers.some(
@@ -762,26 +787,35 @@ if (profileError) {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-sm mb-2">
-                        اسم الخدمة *
-                      </label>
+                <div>
+  <label className="block text-sm mb-2">
+    نوع الخدمة *
+  </label>
 
-                      <input
-                        type="text"
-                        required
-                        value={service.name}
-                        onChange={(e) =>
-                          updateService(
-                            index,
-                            'name',
-                            e.target.value,
-                          )
-                        }
-                        placeholder="مثال: قص الشعر"
-                        className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold"
-                      />
-                    </div>
+  <select
+    required
+    value={service.name}
+    onChange={(e) =>
+      updateService(index, 'name', e.target.value)
+    }
+    className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-gold"
+  >
+    {STANDARD_SERVICES
+      .filter(
+        (name) =>
+          name === service.name ||
+          !services.some(
+            (other, otherIndex) =>
+              otherIndex !== index && other.name === name,
+          ),
+      )
+      .map((name) => (
+        <option key={name} value={name}>
+          {name}
+        </option>
+      ))}
+  </select>
+</div>
 
                     <div>
                       <label className="block text-sm mb-2">
@@ -841,13 +875,16 @@ if (profileError) {
               ))}
             </div>
 
-            <button
-              type="button"
-              onClick={addService}
-              className="mt-5 w-full border border-dashed border-gold/40 text-gold rounded-xl py-3 hover:bg-gold/5 transition"
-            >
-              + إضافة خدمة أخرى
-            </button>
+         <button
+  type="button"
+  onClick={addService}
+  disabled={services.length >= STANDARD_SERVICES.length}
+  className="mt-5 w-full border border-dashed border-gold/40 text-gold rounded-xl py-3 hover:bg-gold/5 transition disabled:opacity-40 disabled:cursor-not-allowed"
+>
+  {services.length >= STANDARD_SERVICES.length
+    ? 'تمت إضافة جميع الخدمات الأربع'
+    : '+ إضافة خدمة أخرى'}
+</button>
 
             <div className="flex justify-between mt-8">
               <button
